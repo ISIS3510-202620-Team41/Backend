@@ -5,6 +5,7 @@ API REST para la app Android del equipo 41. Spring Boot 4 + Java 21.
 Cubre dos features:
 
 - **#15 Login Authentication** — registro, login, access + refresh tokens, logout y límite de intentos
+- **Google federated login** — verificación de Google ID tokens y vinculación por email verificado
 - **#11 Profile Picture** — subida de foto con reescalado, limpieza de EXIF, reemplazo, borrado y edición de perfil
 
 ---
@@ -31,6 +32,7 @@ Copia `.env.example` a `.env`. Las dos que importan:
 |---|---|---|
 | `JWT_SECRET` | Firma los tokens. **Mínimo 32 caracteres** | uno de desarrollo, inseguro |
 | `PUBLIC_BASE_URL` | Prefijo de las URLs de las imágenes | `http://localhost:8080` |
+| `GOOGLE_CLIENT_ID` | Audience/client ID aceptado para Google ID tokens | — |
 
 El servidor **no arranca** si `JWT_SECRET` tiene menos de 32 caracteres. Es a propósito: es preferible fallar al arrancar que emitir tokens débiles sin que nadie se entere.
 
@@ -46,6 +48,7 @@ Todo bajo `/api`. JSON, salvo la subida de imagen que es `multipart/form-data`.
 |---|---|---|---|
 | `POST` | `/api/auth/register` | — | Crea la cuenta y devuelve el par de tokens |
 | `POST` | `/api/auth/login` | — | Devuelve el par de tokens |
+| `POST` | `/api/auth/google` | — | Verifica un Google ID token y devuelve el par de tokens |
 | `POST` | `/api/auth/refresh` | — | Canjea el refresh por un par nuevo |
 | `POST` | `/api/auth/logout` | — | Revoca el refresh token |
 
@@ -71,6 +74,17 @@ Todo bajo `/api`. JSON, salvo la subida de imagen que es `multipart/form-data`.
 ```json
 { "email": "sebas@test.com", "password": "micontrasena123" }
 ```
+
+`POST /api/auth/google`
+
+```json
+{ "idToken": "<Google ID token>" }
+```
+
+El backend verifica la firma, issuer, audience (`GOOGLE_CLIENT_ID`), expiracion
+y `email_verified` usando la libreria oficial de Google. Si el email ya existe,
+se vincula automaticamente despues de verificar el token; si no, se crea el
+usuario.
 
 `POST /api/auth/refresh` y `POST /api/auth/logout`
 

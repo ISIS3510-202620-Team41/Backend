@@ -34,6 +34,12 @@ public class AuthController {
         return ResponseEntity.ok(authService.login(request, clientIp(httpRequest)));
     }
 
+    @PostMapping("/google")
+    public ResponseEntity<AuthDtos.AuthResponse> google(
+            @Valid @RequestBody AuthDtos.GoogleLoginRequest request) {
+        return ResponseEntity.ok(authService.loginWithGoogle(request));
+    }
+
     @PostMapping("/refresh")
     public ResponseEntity<AuthDtos.AuthResponse> refresh(
             @Valid @RequestBody AuthDtos.RefreshRequest request) {

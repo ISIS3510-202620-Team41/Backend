@@ -32,6 +32,10 @@ public class User {
     @Column(nullable = false)
     private String name;
 
+    /** Subject estable que Google asigna a la cuenta federada. */
+    @Column(name = "google_subject", unique = true)
+    private String googleSubject;
+
     /** Descripcion corta que el usuario edita desde su perfil. */
     @Column(length = 300)
     private String bio;
@@ -54,6 +58,11 @@ public class User {
         this.createdAt = Instant.now();
     }
 
+    public User(String email, String passwordHash, String name, String googleSubject) {
+        this(email, passwordHash, name);
+        this.googleSubject = googleSubject;
+    }
+
     public UUID getId() {
         return id;
     }
@@ -68,6 +77,14 @@ public class User {
 
     public String getName() {
         return name;
+    }
+
+    public String getGoogleSubject() {
+        return googleSubject;
+    }
+
+    public void setGoogleSubject(String googleSubject) {
+        this.googleSubject = googleSubject;
     }
 
     public void setName(String name) {

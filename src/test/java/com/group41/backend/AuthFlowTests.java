@@ -222,4 +222,26 @@ class AuthFlowTests {
                                 """.formatted(email)))
                 .andExpect(status().isTooManyRequests());
     }
+
+    @Test
+    @DisplayName("Google auth rechaza idToken ausente o vacio")
+    void googleAuthRequiresIdToken() throws Exception {
+        mockMvc.perform(post("/api/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.idToken").exists());
+    }
+
+    @Test
+    @DisplayName("Google auth rechaza un token que no puede verificarse")
+    void googleAuthRejectsInvalidToken() throws Exception {
+        mockMvc.perform(post("/api/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"idToken":"not-a-google-token"}
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+    }
 }

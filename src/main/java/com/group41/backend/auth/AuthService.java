@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 public class AuthService {
@@ -19,17 +20,32 @@ public class AuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final LoginRateLimiter rateLimiter;
+    private final GoogleIdTokenService googleIdTokenService;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        RefreshTokenService refreshTokenService,
-                       LoginRateLimiter rateLimiter) {
+                       LoginRateLimiter rateLimiter,
+                       GoogleIdTokenService googleIdTokenService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.rateLimiter = rateLimiter;
+        this.googleIdTokenService = googleIdTokenService;
+    }
+
+    @Transactional
+    public AuthDtos.AuthResponse loginWithGoogle(AuthDtos.GoogleLoginRequest request) {
+        GoogleIdTokenService.GoogleIdentity identity =
+                googleIdTokenService.verify(request.idToken());
+        String email = normalizeEmail(identity.email());
+
+        User user = userRepository.findByGoogleSubject(identity.subject())
+                .orElseGet(() -> linkOrCreateGoogleUser(identity, email));
+
+        return buildResponse(user);
     }
 
     @Transactional
@@ -106,6 +122,31 @@ public class AuthService {
                 jwtService.getExpirationSeconds(),
                 toUserResponse(user)
         );
+    }
+
+    private User linkOrCreateGoogleUser(GoogleIdTokenService.GoogleIdentity identity,
+                                        String email) {
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user != null) {
+            if (user.getGoogleSubject() != null
+                    && !user.getGoogleSubject().equals(identity.subject())) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "Ese correo ya esta vinculado a otra cuenta de Google");
+            }
+            user.setGoogleSubject(identity.subject());
+            return userRepository.save(user);
+        }
+
+        String name = identity.name() == null || identity.name().isBlank()
+                ? email.substring(0, email.indexOf('@'))
+                : identity.name().trim();
+        User googleUser = new User(
+                email,
+                passwordEncoder.encode(UUID.randomUUID().toString()),
+                name,
+                identity.subject()
+        );
+        return userRepository.save(googleUser);
     }
 
     public static AuthDtos.UserResponse toUserResponse(User user) {
