@@ -1,8 +1,10 @@
-package com.group41.backend.user;
+package com.group41.backend.user.controller;
 
 import com.group41.backend.auth.AuthDtos;
 import com.group41.backend.auth.AuthService;
 import com.group41.backend.storage.AvatarStorageService;
+import com.group41.backend.user.domain.User;
+import com.group41.backend.user.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;

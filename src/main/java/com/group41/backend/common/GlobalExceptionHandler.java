@@ -6,6 +6,10 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -37,6 +41,22 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .body(ApiError.of(HttpStatus.PAYLOAD_TOO_LARGE.value(), "La imagen es demasiado grande"));
+    }
+
+    /** Un {id} que no es UUID, un numero mal escrito en un query param, etc. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return ResponseEntity
+                .badRequest()
+                .body(ApiError.of(HttpStatus.BAD_REQUEST.value(), "Parametro invalido: " + ex.getName()));
+    }
+
+    /** JSON mal formado o parametro obligatorio ausente. */
+    @ExceptionHandler({HttpMessageNotReadableException.class,MissingServletRequestParameterException.class, MissingServletRequestPartException.class})
+    public ResponseEntity<ApiError> handleMalformedRequest(Exception ex) {
+        return ResponseEntity
+                .badRequest()
+                .body(ApiError.of(HttpStatus.BAD_REQUEST.value(), "Peticion mal formada"));
     }
 
     /**

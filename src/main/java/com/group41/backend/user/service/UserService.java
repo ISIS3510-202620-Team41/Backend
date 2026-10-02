@@ -1,7 +1,9 @@
-package com.group41.backend.user;
+package com.group41.backend.user.service;
 
 import com.group41.backend.auth.AuthDtos;
 import com.group41.backend.auth.AuthService;
+import com.group41.backend.user.domain.User;
+import com.group41.backend.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

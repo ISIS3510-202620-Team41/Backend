@@ -2,8 +2,8 @@ package com.group41.backend.auth;
 
 import com.group41.backend.common.ApiException;
 import com.group41.backend.security.JwtService;
-import com.group41.backend.user.User;
-import com.group41.backend.user.UserRepository;
+import com.group41.backend.user.domain.User;
+import com.group41.backend.user.repository.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;

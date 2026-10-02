@@ -1,6 +1,6 @@
 package com.group41.backend.auth;
 
-import com.group41.backend.user.User;
+import com.group41.backend.user.domain.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;

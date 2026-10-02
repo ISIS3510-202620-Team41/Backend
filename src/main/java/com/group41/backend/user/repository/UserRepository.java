@@ -1,5 +1,6 @@
-package com.group41.backend.user;
+package com.group41.backend.user.repository;
 
+import com.group41.backend.user.domain.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
