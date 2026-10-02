@@ -31,3 +31,14 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Backend ###
+# Base de datos H2 local
+data/
+*.db
+*.mv.db
+*.trace.db
+# Imagenes subidas en desarrollo
+uploads/
+# Secretos: nunca commitear
+.env
