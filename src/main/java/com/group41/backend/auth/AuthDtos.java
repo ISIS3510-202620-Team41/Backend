@@ -27,6 +27,11 @@ public final class AuthDtos {
     ) {
     }
 
+    public record GoogleLoginRequest(
+            @NotBlank String idToken
+    ) {
+    }
+
     public record RefreshRequest(
             @NotBlank String refreshToken
     ) {
