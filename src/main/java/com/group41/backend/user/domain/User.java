@@ -1,4 +1,4 @@
-package com.group41.backend.user;
+package com.group41.backend.user.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

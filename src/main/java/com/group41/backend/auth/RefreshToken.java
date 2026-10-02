@@ -10,7 +10,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
-import com.group41.backend.user.User;
+import com.group41.backend.user.domain.User;
 
 import java.time.Instant;
 import java.util.UUID;

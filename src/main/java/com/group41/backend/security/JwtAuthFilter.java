@@ -1,7 +1,7 @@
 package com.group41.backend.security;
 
-import com.group41.backend.user.User;
-import com.group41.backend.user.UserRepository;
+import com.group41.backend.user.domain.User;
+import com.group41.backend.user.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
