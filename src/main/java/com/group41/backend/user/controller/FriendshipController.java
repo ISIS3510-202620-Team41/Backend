@@ -3,6 +3,7 @@ package com.group41.backend.user.controller;
 import com.group41.backend.auth.AuthDtos;
 import com.group41.backend.user.domain.User;
 import com.group41.backend.user.service.FriendshipService;
+import com.group41.backend.analytics.AnalyticsPublisher;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -26,9 +27,11 @@ import java.util.UUID;
 public class FriendshipController {
 
     private final FriendshipService friendshipService;
+    private final AnalyticsPublisher analytics;
 
-    public FriendshipController(FriendshipService friendshipService) {
+    public FriendshipController(FriendshipService friendshipService, AnalyticsPublisher analytics) {
         this.friendshipService = friendshipService;
+        this.analytics = analytics;
     }
 
     /** Envia una solicitud de amistad por correo. */
@@ -66,6 +69,9 @@ public class FriendshipController {
     public ResponseEntity<List<AuthDtos.UserResponse>> gaps(
             @AuthenticationPrincipal User user,
             @RequestParam("dateTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime dateTime) {
-        return ResponseEntity.ok(friendshipService.availableFriends(user, dateTime.toZonedDateTime()));
+        List<AuthDtos.UserResponse> free = friendshipService.availableFriends(user, dateTime.toZonedDateTime());
+        // Aun no existe el concepto de "plan": por ahora solo se emite "viewed".
+        analytics.friendAvailabilityUsed(user.getId(), "viewed");
+        return ResponseEntity.ok(free);
     }
 }
