@@ -145,12 +145,34 @@ class GoogleCalendarTests {
     @Test
     @DisplayName("los dos endpoints de Google exigen token")
     void requireAuth() throws Exception {
+        mockMvc.perform(get("/api/schedules/google/status"))
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/schedules/sync/google")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"authCode\":\"x\"}"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/schedules/sync/google/refresh"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("el estado de conexion no contacta Google")
+    void connectionStatusUsesStoredCredential() throws Exception {
+        mockMvc.perform(get("/api/schedules/google/status")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.connected").value(false));
+
+        credentialRepository.save(new com.group41.backend.schedule.domain.GoogleCredential(
+                userId, crypto.encrypt("refresh-token")));
+
+        mockMvc.perform(get("/api/schedules/google/status")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.connected").value(true));
+
+        verify(googleApi, never()).refreshAccessToken(any());
+        verify(googleApi, never()).listCalendars(any());
     }
 
     @Test
@@ -212,6 +234,7 @@ class GoogleCalendarTests {
         stubConnect("code-1", "access-1", "refresh-1", List.of(timed("e1", "Calculo", day, 10, 12)));
         connect("code-1").andExpect(status().isOk());
 
+        when(googleApi.refreshAccessToken("refresh-1")).thenReturn("access-2");
         when(googleApi.listCalendars("access-2")).thenReturn(List.of(primaryCalendar()));
         when(googleApi.listEvents(eq("access-2"), eq("primary"), any(Instant.class), any(Instant.class)))
                 .thenReturn(List.of(timed("e2", "Fisica", day, 15, 16)));

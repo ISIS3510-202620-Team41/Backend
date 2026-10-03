@@ -38,6 +38,12 @@ public class ScheduleController {
         return ResponseEntity.ok(scheduleService.gapsFor(user.getId(), date, tz));
     }
 
+    @GetMapping("/google/status")
+    public ResponseEntity<ScheduleDtos.GoogleStatusResponse> googleStatus(
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(googleCalendarService.status(user.getId()));
+    }
+
     /** Importa un .ics y reemplaza los bloques ICS anteriores del usuario. */
     @PostMapping("/sync/ics")
     public ResponseEntity<ScheduleDtos.IcsImportResponse> syncIcs(

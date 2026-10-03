@@ -115,6 +115,10 @@ public class GoogleCalendarService {
         return importEvents(userId, accessToken, zone);
     }
 
+    public ScheduleDtos.GoogleStatusResponse status(UUID userId) {
+        return new ScheduleDtos.GoogleStatusResponse(credentialRepository.existsByUserId(userId));
+    }
+
     private ScheduleDtos.GoogleSyncResponse importEvents(UUID userId, String accessToken, ZoneId zone) {
         Instant now = Instant.now();
         Instant from = now.minus(pastDays, ChronoUnit.DAYS);

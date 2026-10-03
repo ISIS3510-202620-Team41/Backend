@@ -36,4 +36,7 @@ public final class ScheduleDtos {
      */
     public record GoogleSyncResponse(int imported, int skippedEvents, int calendars) {
     }
+
+    public record GoogleStatusResponse(boolean connected) {
+    }
 }
