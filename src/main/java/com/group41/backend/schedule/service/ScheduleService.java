@@ -18,6 +18,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -131,6 +132,36 @@ public class ScheduleService {
             return Set.of();
         }
         return new HashSet<>(timeBlockRepository.findBusyUserIds(userIds, at));
+    }
+
+    /**
+     * Minutos que le quedan libres al usuario desde este instante, dentro de la
+     * ventana diaria. 0 si esta ocupado ahora o si ahora cae fuera de la ventana.
+     */
+    @Transactional(readOnly = true)
+    public int freeMinutesNow(UUID userId, String timezone) {
+        ZoneId zone = resolveZone(timezone);
+        ZonedDateTime now = ZonedDateTime.now(zone).withNano(0);
+        ZonedDateTime windowStart = now.toLocalDate().atTime(dayStart).atZone(zone);
+        ZonedDateTime windowEnd = now.toLocalDate().atTime(dayEnd).atZone(zone);
+
+        if (now.isBefore(windowStart) || !now.isBefore(windowEnd)) {
+            return 0;
+        }
+
+        List<GapCalculator.Interval> busy = timeBlockRepository
+                .findOverlapping(userId, now, windowEnd).stream()
+                .map(t -> new GapCalculator.Interval(t.getStartTime().toInstant(), t.getEndTime().toInstant()))
+                .toList();
+
+        // El cursor arranca en "ahora": si el primer hueco no empieza ahora mismo,
+        // hay un bloque activo y el usuario esta ocupado.
+        List<GapCalculator.Interval> free =
+                GapCalculator.freeIntervals(now.toInstant(), windowEnd.toInstant(), busy);
+        if (free.isEmpty() || !free.get(0).start().equals(now.toInstant())) {
+            return 0;
+        }
+        return (int) Duration.between(free.get(0).start(), free.get(0).end()).toMinutes();
     }
 
     public ZoneId resolveZone(String timezone) {
