@@ -144,7 +144,9 @@ public class ActivityController {
                     response.id(),
                     response.category().name(),
                     validRecommendationId,
-                    parseFreeMinutes(freeTimeMinutes));
+                    parseFreeMinutes(freeTimeMinutes),
+                    response.title(),
+                    response.price());
         }
         return ResponseEntity.ok(response);
     }

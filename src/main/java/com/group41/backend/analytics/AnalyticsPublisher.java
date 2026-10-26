@@ -62,12 +62,24 @@ public class AnalyticsPublisher {
 
     public void activitySelected(UUID userId, String activityId, String category,
                                  String recommendationId, Integer freeTimeMinutes) {
+        activitySelected(userId, activityId, category, recommendationId, freeTimeMinutes, null, null);
+    }
+
+    public void activitySelected(UUID userId, String activityId, String category,
+                                 String recommendationId, Integer freeTimeMinutes,
+                                 String title, String price) {
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("activityId", activityId);
         extra.put("category", category);
         extra.put("recommendationId", recommendationId);
         if (freeTimeMinutes != null) {
             extra.put("freeTimeMinutes", freeTimeMinutes);
+        }
+        if (title != null) {
+            extra.put("title", title);
+        }
+        if (price != null) {
+            extra.put("price", price);
         }
         send(event("recommended_activity_selected", userId, extra));
     }
