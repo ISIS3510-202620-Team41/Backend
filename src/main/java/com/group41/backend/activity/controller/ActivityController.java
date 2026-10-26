@@ -3,9 +3,11 @@ package com.group41.backend.activity.controller;
 import com.group41.backend.activity.service.ActivityService;
 import com.group41.backend.analytics.AnalyticsPublisher;
 import com.group41.backend.schedule.service.ScheduleService;
+import com.group41.backend.storage.ActivityStorageService;
 import com.group41.backend.user.domain.User;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -25,17 +28,21 @@ import java.util.UUID;
 public class ActivityController {
 
     private static final int MAX_FREE_MINUTES = 1440;
+    private static final String CACHE_HEADER_VALUE = "public, max-age=300";
 
     private final ActivityService activityService;
     private final ScheduleService scheduleService;
     private final AnalyticsPublisher analytics;
+    private final ActivityStorageService activityStorageService;
 
     public ActivityController(ActivityService activityService,
                               ScheduleService scheduleService,
-                              AnalyticsPublisher analytics) {
+                              AnalyticsPublisher analytics,
+                              ActivityStorageService activityStorageService) {
         this.activityService = activityService;
         this.scheduleService = scheduleService;
         this.analytics = analytics;
+        this.activityStorageService = activityStorageService;
     }
 
     /** Crea una actividad. */
@@ -46,6 +53,27 @@ public class ActivityController {
         return ResponseEntity.status(HttpStatus.CREATED).body(activityService.create(user, request));
     }
 
+    /** Obtiene el detalle de una actividad por ID. */
+    @GetMapping("/{id}")
+    public ResponseEntity<ActivityDtos.ActivityResponse> getById(
+            @AuthenticationPrincipal User user,
+            @PathVariable UUID id,
+            @RequestParam(value = "lat", required = false) Double lat,
+            @RequestParam(value = "lon", required = false) Double lon) {
+        return ResponseEntity.ok()
+                .header("Cache-Control", CACHE_HEADER_VALUE)
+                .body(activityService.getById(user, id, lat, lon));
+    }
+
+    /** Sube una imagen para la actividad. */
+    @PostMapping(value = "/{id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ActivityDtos.ActivityResponse> uploadImage(
+            @AuthenticationPrincipal User user,
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(activityStorageService.storeActivityImage(user, id, file));
+    }
+
     /** Actividades cercanas. radius en km (por defecto 1, maximo 50). */
     @GetMapping
     public ResponseEntity<List<ActivityDtos.ActivityResponse>> nearby(
@@ -53,7 +81,9 @@ public class ActivityController {
             @RequestParam("lat") double lat,
             @RequestParam("lon") double lon,
             @RequestParam(value = "radius", required = false) Double radius) {
-        return ResponseEntity.ok(activityService.nearby(user, lat, lon, radius));
+        return ResponseEntity.ok()
+                .header("Cache-Control", CACHE_HEADER_VALUE)
+                .body(activityService.nearby(user, lat, lon, radius));
     }
 
     /**
@@ -84,6 +114,7 @@ public class ActivityController {
         }
 
         return ResponseEntity.ok()
+                .header("Cache-Control", CACHE_HEADER_VALUE)
                 .header("X-Recommendation-Id", recommendationId)
                 .header("X-Free-Time-Minutes", String.valueOf(freeMinutes))
                 .body(result);

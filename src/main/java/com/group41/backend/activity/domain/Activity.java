@@ -56,6 +56,18 @@ public class Activity {
     @Column(name = "created_by")
     private UUID createdBy;
 
+    @Column(name = "image_url", length = 500)
+    private String imageUrl;
+
+    @Column(length = 50)
+    private String price;
+
+    @Column
+    private Integer capacity;
+
+    @Column(name = "about_location", length = 2000)
+    private String aboutLocation;
+
     protected Activity() {
         // Requerido por JPA.
     }
@@ -63,6 +75,14 @@ public class Activity {
     public Activity(String title, String description, Category category,
                     ZonedDateTime startTime, ZonedDateTime endTime,
                     String locationName, double latitude, double longitude, UUID createdBy) {
+        this(title, description, category, startTime, endTime, locationName, latitude, longitude, createdBy,
+                null, null, null, null);
+    }
+
+    public Activity(String title, String description, Category category,
+                    ZonedDateTime startTime, ZonedDateTime endTime,
+                    String locationName, double latitude, double longitude, UUID createdBy,
+                    String imageUrl, String price, Integer capacity, String aboutLocation) {
         Objects.requireNonNull(startTime, "startTime");
         Objects.requireNonNull(endTime, "endTime");
         if (!endTime.isAfter(startTime)) {
@@ -77,6 +97,10 @@ public class Activity {
         this.latitude = latitude;
         this.longitude = longitude;
         this.createdBy = createdBy;
+        this.imageUrl = imageUrl;
+        this.price = price;
+        this.capacity = capacity;
+        this.aboutLocation = aboutLocation;
     }
 
     public UUID getId() {
@@ -117,5 +141,37 @@ public class Activity {
 
     public UUID getCreatedBy() {
         return createdBy;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
+
+    public String getPrice() {
+        return price;
+    }
+
+    public void setPrice(String price) {
+        this.price = price;
+    }
+
+    public Integer getCapacity() {
+        return capacity;
+    }
+
+    public void setCapacity(Integer capacity) {
+        this.capacity = capacity;
+    }
+
+    public String getAboutLocation() {
+        return aboutLocation;
+    }
+
+    public void setAboutLocation(String aboutLocation) {
+        this.aboutLocation = aboutLocation;
     }
 }
