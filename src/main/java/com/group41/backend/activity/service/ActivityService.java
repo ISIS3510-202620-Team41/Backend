@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -58,6 +59,18 @@ public class ActivityService {
                 ? null
                 : request.description().trim();
 
+        String imageUrl = request.imageUrl() == null || request.imageUrl().isBlank()
+                ? null
+                : request.imageUrl().trim();
+
+        String price = request.price() == null || request.price().isBlank()
+                ? "Gratis"
+                : request.price().trim();
+
+        String aboutLocation = request.aboutLocation() == null || request.aboutLocation().isBlank()
+                ? null
+                : request.aboutLocation().trim();
+
         Activity saved = activityRepository.save(new Activity(
                 request.title().trim(),
                 description,
@@ -67,7 +80,11 @@ public class ActivityService {
                 request.locationName().trim(),
                 request.latitude(),
                 request.longitude(),
-                me.getId()));
+                me.getId(),
+                imageUrl,
+                price,
+                request.capacity(),
+                aboutLocation));
 
         return toResponse(saved, null, 0, false);
     }
@@ -108,6 +125,24 @@ public class ActivityService {
         return result;
     }
 
+    /** Obtiene el detalle de una actividad por su ID. */
+    @Transactional(readOnly = true)
+    public ActivityDtos.ActivityResponse getById(User me, UUID activityId, Double lat, Double lon) {
+        Activity a = activityRepository.findById(activityId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Actividad no encontrada"));
+
+        Double distanceKm = null;
+        if (lat != null && lon != null) {
+            validateCoordinates(lat, lon);
+            distanceKm = round(GeoUtils.distanceKm(lat, lon, a.getLatitude(), a.getLongitude()), 2);
+        }
+
+        int participants = (int) userActivityRepository.countByActivityId(activityId);
+        boolean joined = userActivityRepository.existsByUserIdAndActivityId(me.getId(), activityId);
+
+        return toResponse(a, distanceKm, participants, joined);
+    }
+
     @Transactional
     public ActivityDtos.ActivityResponse join(User me, UUID activityId) {
         Activity activity = activityRepository.findById(activityId)
@@ -120,6 +155,11 @@ public class ActivityService {
             throw new ApiException(HttpStatus.CONFLICT, "Ya estas inscrito en esta actividad");
         }
 
+        int currentParticipants = (int) userActivityRepository.countByActivityId(activityId);
+        if (activity.getCapacity() != null && currentParticipants >= activity.getCapacity()) {
+            throw new ApiException(HttpStatus.CONFLICT, "La actividad ya alcanzo su cupo maximo");
+        }
+
         try {
             userActivityRepository.saveAndFlush(new UserActivity(me.getId(), activityId));
         } catch (DataIntegrityViolationException ex) {
@@ -129,7 +169,7 @@ public class ActivityService {
 
         recommendationEngine.recalculate(me.getId());
 
-        return toResponse(activity, null, (int) userActivityRepository.countByActivityId(activityId), true);
+        return toResponse(activity, null, currentParticipants + 1, true);
     }
 
     @Transactional
@@ -180,8 +220,9 @@ public class ActivityService {
                 .toList();
     }
 
-    private static ActivityDtos.ActivityResponse toResponse(Activity a, Double distanceKm,
-                                                            int participants, boolean joined) {
+    public static ActivityDtos.ActivityResponse toResponse(Activity a, Double distanceKm,
+                                                           int participants, boolean joined) {
+        int durationMinutes = (int) ChronoUnit.MINUTES.between(a.getStartTime(), a.getEndTime());
         return new ActivityDtos.ActivityResponse(
                 a.getId().toString(),
                 a.getTitle(),
@@ -189,11 +230,16 @@ public class ActivityService {
                 a.getCategory(),
                 DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(a.getStartTime()),
                 DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(a.getEndTime()),
+                durationMinutes,
                 a.getLocationName(),
                 a.getLatitude(),
                 a.getLongitude(),
                 distanceKm,
                 participants,
+                a.getCapacity(),
+                a.getPrice() != null ? a.getPrice() : "Gratis",
+                a.getAboutLocation(),
+                a.getImageUrl(),
                 joined);
     }
 

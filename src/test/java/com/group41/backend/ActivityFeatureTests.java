@@ -30,6 +30,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -347,5 +349,81 @@ class ActivityFeatureTests {
                 .andExpect(jsonPath("$[0].activity.title").value("Cine cerca"))
                 .andExpect(jsonPath("$[1].activity.title").value("Yoga inscrita"))
                 .andExpect(jsonPath("$[2].activity.title").value("Futbol lejos"));
+    }
+
+    // ------------------------------------------------------------------ prototipo y sprint 3
+
+    @Test
+    @DisplayName("crear actividad con campos del prototipo y consultar por id")
+    void createAndGetActivityWithPrototypeFields() throws Exception {
+        ZonedDateTime start = inDays(2);
+        ZonedDateTime end = inDays(2).plusHours(2);
+        String body = """
+                {
+                    "title": "Partido Prototipo",
+                    "description": "Detalles completos",
+                    "category": "DEPORTES",
+                    "startTime": "%s",
+                    "endTime": "%s",
+                    "locationName": "Cancha 1",
+                    "latitude": %s,
+                    "longitude": -74.0,
+                    "price": "$15.000",
+                    "capacity": 10,
+                    "aboutLocation": "Canchas sinteticas con iluminacion",
+                    "imageUrl": "https://example.com/foto.jpg"
+                }
+                """.formatted(iso(start), iso(end), baseLat);
+
+        MvcResult result = create(alice, body)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.title").value("Partido Prototipo"))
+                .andExpect(jsonPath("$.durationMinutes").value(120))
+                .andExpect(jsonPath("$.price").value("$15.000"))
+                .andExpect(jsonPath("$.capacity").value(10))
+                .andExpect(jsonPath("$.aboutLocation").value("Canchas sinteticas con iluminacion"))
+                .andExpect(jsonPath("$.imageUrl").value("https://example.com/foto.jpg"))
+                .andReturn();
+
+        String activityId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asString();
+
+        mockMvc.perform(get("/api/activities/" + activityId)
+                        .param("lat", String.valueOf(baseLat))
+                        .param("lon", "-74.0")
+                        .header("Authorization", "Bearer " + alice.token()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "public, max-age=300"))
+                .andExpect(jsonPath("$.id").value(activityId))
+                .andExpect(jsonPath("$.title").value("Partido Prototipo"))
+                .andExpect(jsonPath("$.durationMinutes").value(120))
+                .andExpect(jsonPath("$.distanceKm").value(0.0));
+    }
+
+    @Test
+    @DisplayName("no se puede unir si la actividad alcanzo el cupo maximo")
+    void cannotJoinIfCapacityReached() throws Exception {
+        ZonedDateTime start = inDays(2);
+        ZonedDateTime end = inDays(2).plusHours(2);
+        String body = """
+                {
+                    "title": "Cupo Lleno Test",
+                    "category": "DEPORTES",
+                    "startTime": "%s",
+                    "endTime": "%s",
+                    "locationName": "Cancha",
+                    "latitude": %s,
+                    "longitude": -74.0,
+                    "capacity": 1
+                }
+                """.formatted(iso(start), iso(end), baseLat);
+
+        MvcResult result = create(alice, body).andExpect(status().isCreated()).andReturn();
+        String activityId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asString();
+
+        join(alice, UUID.fromString(activityId)).andExpect(status().isOk());
+
+        join(bob, UUID.fromString(activityId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("La actividad ya alcanzo su cupo maximo"));
     }
 }

@@ -122,6 +122,21 @@ class AnalyticsPublisherTests {
                 .doesNotContain("freeTimeMinutes");
     }
 
+
+    @Test
+    @DisplayName("recommended_activity_selected incluye title y price si estan presentes")
+    void activitySelectedTitleAndPriceIncluded() throws Exception {
+        AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "");
+
+        publisher.activitySelected(userId, "act-1", "DEPORTES", "rec-9", 40, "Torneo Futbol 5", "$15.000 COP");
+
+        Received req = next();
+        assertThat(req).isNotNull();
+        assertThat(req.body())
+                .contains("\"title\":\"Torneo Futbol 5\"")
+                .contains("\"price\":\"$15.000 COP\"");
+    }
+
     @Test
     @DisplayName("cada evento lleva un eventId distinto")
     void eachEventHasItsOwnId() throws Exception {
