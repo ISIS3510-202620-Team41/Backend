@@ -99,40 +99,76 @@ class AnalyticsPublisherTests {
     }
 
     @Test
-    @DisplayName("recommended_activity_selected solo incluye freeTimeMinutes si se conoce")
-    void activitySelectedFreeTimeIsOptional() throws Exception {
+    @DisplayName("recommended_activity_selected incluye las duraciones cuando se conocen")
+    void activitySelectedIncludesDurations() throws Exception {
         AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "");
 
-        publisher.activitySelected(userId, "act-1", "DEPORTES", "rec-9", 40);
-        publisher.activitySelected(userId, "act-2", "ESTUDIO", "rec-9", null);
+        publisher.activitySelected(userId, "act-1", "DEPORTES", "rec-9", 180, 120);
 
-        Received withTime = next();
-        Received withoutTime = next();
-        assertThat(withTime).isNotNull();
-        assertThat(withoutTime).isNotNull();
+        Received request = next();
+        assertThat(request).isNotNull();
 
-        assertThat(withTime.body())
+        assertThat(request.body())
                 .contains("\"eventType\":\"recommended_activity_selected\"")
                 .contains("\"activityId\":\"act-1\"")
                 .contains("\"category\":\"DEPORTES\"")
                 .contains("\"recommendationId\":\"rec-9\"")
-                .contains("\"freeTimeMinutes\":40");
-        assertThat(withoutTime.body())
-                .contains("\"activityId\":\"act-2\"")
-                .doesNotContain("freeTimeMinutes");
+                .contains("\"freeTimeMinutes\":180")
+                .contains("\"activityDurationMinutes\":120");
     }
 
+    @Test
+    @DisplayName("recommended_activity_selected omite las duraciones desconocidas")
+    void activitySelectedDurationsAreOptional() throws Exception {
+        AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "");
+
+        publisher.activitySelected(userId, "act-2", "ESTUDIO", "rec-9", null, null);
+
+        Received request = next();
+        assertThat(request).isNotNull();
+
+        assertThat(request.body())
+                .contains("\"eventType\":\"recommended_activity_selected\"")
+                .contains("\"activityId\":\"act-2\"")
+                .doesNotContain("\"freeTimeMinutes\"")
+                .doesNotContain("\"activityDurationMinutes\"");
+    }
+
+    @Test
+    @DisplayName("recommended_activity_selected admite duracion aunque no se conozca el tiempo libre")
+    void activityDurationWithoutFreeTime() throws Exception {
+        AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "");
+
+        publisher.activitySelected(userId, "act-3", "CULTURA", "rec-9", null, 90);
+
+        Received request = next();
+        assertThat(request).isNotNull();
+
+        assertThat(request.body())
+                .contains("\"activityDurationMinutes\":90")
+                .doesNotContain("\"freeTimeMinutes\"");
+    }
 
     @Test
     @DisplayName("recommended_activity_selected incluye title y price si estan presentes")
     void activitySelectedTitleAndPriceIncluded() throws Exception {
         AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "");
 
-        publisher.activitySelected(userId, "act-1", "DEPORTES", "rec-9", 40, "Torneo Futbol 5", "$15.000 COP");
+        publisher.activitySelected(
+                userId,
+                "act-1",
+                "DEPORTES",
+                "rec-9",
+                180,
+                120,
+                "Torneo Futbol 5",
+                "$15.000 COP");
 
-        Received req = next();
-        assertThat(req).isNotNull();
-        assertThat(req.body())
+        Received request = next();
+        assertThat(request).isNotNull();
+
+        assertThat(request.body())
+                .contains("\"activityDurationMinutes\":120")
                 .contains("\"title\":\"Torneo Futbol 5\"")
                 .contains("\"price\":\"$15.000 COP\"");
     }
@@ -166,19 +202,18 @@ class AnalyticsPublisherTests {
     @DisplayName("con el engine caido no lanza excepcion ni hace esperar a quien llama")
     void unreachableEngineNeverBlocksOrThrows() {
         String deadUrl = engineUrl();
-        server.stop(0); // el puerto queda cerrado
+        server.stop(0);
 
         AnalyticsPublisher publisher = new AnalyticsPublisher(true, deadUrl, "");
 
         long startedAt = System.nanoTime();
         assertThatCode(() -> {
             publisher.recommendationShown(userId, "rec-1", 10);
-            publisher.activitySelected(userId, "act-1", "CULTURA", "rec-1", null);
+            publisher.activitySelected(userId, "act-1", "CULTURA", "rec-1", null, 60);
             publisher.friendAvailabilityUsed(userId, "viewed");
         }).doesNotThrowAnyException();
-        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
 
-        // El envio ocurre en otro hilo: quien llama vuelve de inmediato.
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
         assertThat(elapsedMs).isLessThan(500);
     }
 
