@@ -60,29 +60,60 @@ public class AnalyticsPublisher {
                 "freeTimeMinutes", freeTimeMinutes)));
     }
 
+
+    // Original method: preserves compatibility with existing callers.
     public void activitySelected(UUID userId, String activityId, String category,
                                  String recommendationId, Integer freeTimeMinutes) {
-        activitySelected(userId, activityId, category, recommendationId, freeTimeMinutes, null, null);
+        activitySelected(userId, activityId, category, recommendationId,
+                freeTimeMinutes, null, null, null);
     }
 
+    // Original method with title and price.
     public void activitySelected(UUID userId, String activityId, String category,
                                  String recommendationId, Integer freeTimeMinutes,
                                  String title, String price) {
+        activitySelected(userId, activityId, category, recommendationId,
+                freeTimeMinutes, null, title, price);
+    }
+
+    // New method for BQ7: includes the activity duration.
+    public void activitySelected(UUID userId, String activityId, String category,
+                                 String recommendationId, Integer freeTimeMinutes,
+                                 Integer activityDurationMinutes) {
+        activitySelected(userId, activityId, category, recommendationId,
+                freeTimeMinutes, activityDurationMinutes, null, null);
+    }
+
+    // Main implementation: builds the complete analytics event.
+    public void activitySelected(UUID userId, String activityId, String category,
+                                 String recommendationId, Integer freeTimeMinutes,
+                                 Integer activityDurationMinutes,
+                                 String title, String price) {
         Map<String, Object> extra = new LinkedHashMap<>();
+
         extra.put("activityId", activityId);
         extra.put("category", category);
         extra.put("recommendationId", recommendationId);
+
         if (freeTimeMinutes != null) {
             extra.put("freeTimeMinutes", freeTimeMinutes);
         }
+
+        if (activityDurationMinutes != null) {
+            extra.put("activityDurationMinutes", activityDurationMinutes);
+        }
+
         if (title != null) {
             extra.put("title", title);
         }
+
         if (price != null) {
             extra.put("price", price);
         }
+
         send(event("recommended_activity_selected", userId, extra));
     }
+
 
     public void friendAvailabilityUsed(UUID userId, String action) {
         send(event("friend_availability_used", userId, Map.of("action", action)));

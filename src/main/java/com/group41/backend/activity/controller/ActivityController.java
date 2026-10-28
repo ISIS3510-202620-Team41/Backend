@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 
 import java.util.List;
 import java.util.UUID;
@@ -139,14 +142,19 @@ public class ActivityController {
 
         String validRecommendationId = parseUuid(recommendationId);
         if (validRecommendationId != null) {
+            Integer activityDurationMinutes = parseActivityDurationMinutes(
+                    response.startTime(),
+                    response.endTime());
+
             analytics.activitySelected(
-                    user.getId(),
-                    response.id(),
-                    response.category().name(),
-                    validRecommendationId,
-                    parseFreeMinutes(freeTimeMinutes),
-                    response.title(),
-                    response.price());
+                user.getId(),
+                response.id(),
+                response.category().name(),
+                validRecommendationId,
+                parseFreeMinutes(freeTimeMinutes),
+                activityDurationMinutes,
+                response.title(),
+                "Gratis");
         }
         return ResponseEntity.ok(response);
     }
@@ -184,4 +192,30 @@ public class ActivityController {
             return null;
         }
     }
+
+    /**
+     * Calculates the activity duration in minutes using its start and end times.
+     * Returns null if the dates are invalid or the duration is outside the valid range.
+     */
+    private static Integer parseActivityDurationMinutes(String startTime, String endTime) {
+        if (startTime == null || endTime == null) {
+            return null;
+        }
+
+        try {
+            ZonedDateTime start = ZonedDateTime.parse(startTime);
+            ZonedDateTime end = ZonedDateTime.parse(endTime);
+
+            long minutes = Duration.between(start, end).toMinutes();
+
+            if (minutes < 0 || minutes > Integer.MAX_VALUE) {
+                return null;
+            }
+
+            return (int) minutes;
+        } catch (DateTimeParseException | ArithmeticException ex) {
+            return null;
+        }
+    }
+
 }
