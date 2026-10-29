@@ -1,15 +1,19 @@
 package com.group41.backend;
 
-import com.group41.backend.activity.domain.Activity;
-import com.group41.backend.activity.domain.Category;
-import com.group41.backend.activity.repository.ActivityRepository;
-import com.group41.backend.analytics.AnalyticsPublisher;
-import com.group41.backend.schedule.domain.ScheduleSource;
-import com.group41.backend.schedule.domain.TimeBlock;
-import com.group41.backend.schedule.repository.TimeBlockRepository;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -20,25 +24,22 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.group41.backend.activity.domain.Activity;
+import com.group41.backend.activity.domain.Category;
+import com.group41.backend.activity.repository.ActivityRepository;
+import com.group41.backend.analytics.AnalyticsPublisher;
+import com.group41.backend.schedule.domain.ScheduleSource;
+import com.group41.backend.schedule.domain.TimeBlock;
+import com.group41.backend.schedule.repository.TimeBlockRepository;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -151,7 +152,7 @@ class AnalyticsEventsTests {
         assertThat(UUID.fromString(recommendationId)).isNotNull(); // lanza si no es un UUID
         assertThat(freeMinutes).isBetween(0, 960); // la ventana 06:00-22:00 dura 960 minutos
 
-        verify(analytics).recommendationShown(alice.id(), recommendationId, freeMinutes);
+        verify(analytics).recommendationShown(alice.id(), recommendationId, freeMinutes, null);
     }
 
     @Test
@@ -163,7 +164,7 @@ class AnalyticsEventsTests {
                 .andExpect(header().exists("X-Recommendation-Id"))
                 .andExpect(header().exists("X-Free-Time-Minutes"));
 
-        verify(analytics, never()).recommendationShown(any(), any(), anyInt());
+        verify(analytics, never()).recommendationShown(any(), any(), anyInt(),any());
     }
 
     @Test
@@ -177,7 +178,7 @@ class AnalyticsEventsTests {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Free-Time-Minutes", "0"));
 
-        verify(analytics).recommendationShown(any(), any(), org.mockito.ArgumentMatchers.eq(0));
+        verify(analytics).recommendationShown(any(), any(), org.mockito.ArgumentMatchers.eq(0), null);
     }
 
     @Test
@@ -222,7 +223,8 @@ class AnalyticsEventsTests {
             45,
             120,
             activity.getTitle(),
-            "Gratis");
+            "Gratis",
+            "good");
     }
 
     @Test
@@ -256,7 +258,9 @@ class AnalyticsEventsTests {
             null,
             120,
             second.getTitle(),
-            "Gratis");
+            "Gratis",
+            "good"
+            );
 
         // freeTimeMinutes negativo: tambien se descarta.
         Activity third = save("Tres", Category.CULTURA, 0.3);
@@ -269,7 +273,8 @@ class AnalyticsEventsTests {
         null,
         120,
         third.getTitle(),
-        "Gratis");
+        "Gratis",
+        "poor");
     }
 
     @Test

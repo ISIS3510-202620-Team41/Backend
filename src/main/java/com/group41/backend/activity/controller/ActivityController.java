@@ -114,7 +114,8 @@ public class ActivityController {
             @RequestParam("lat") double lat,
             @RequestParam("lon") double lon,
             @RequestParam(value = "radius", required = false) Double radius,
-            @RequestParam(value = "tz", required = false) String tz) {
+            @RequestParam(value = "tz", required = false) String tz,
+            @RequestParam(value = "networkQuality", required = false, defaultValue ="unknown") String networkQuality) {
 
         // Primero lo barato: una zona invalida da 400 antes de rankear nada.
         int freeMinutes = scheduleService.freeMinutesNow(user.getId(), tz);
@@ -125,7 +126,7 @@ public class ActivityController {
 
         // Una lista vacia no cuenta como recomendacion mostrada.
         if (!result.isEmpty()) {
-            analytics.recommendationShown(user.getId(), recommendationId, freeMinutes);
+            analytics.recommendationShown(user.getId(), recommendationId, freeMinutes, networkQuality);
         }
 
         return ResponseEntity.ok()
@@ -148,7 +149,8 @@ public class ActivityController {
             @PathVariable UUID id,
             @RequestParam(value = "recommendationId", required = false) String recommendationId,
             @RequestParam(value = "freeTimeMinutes", required = false) String freeTimeMinutes,
-            @RequestParam(value = "source", required = false) String source) {
+            @RequestParam(value = "source", required = false) String source,
+            @RequestParam(value = "networkQuality", required = false, defaultValue ="unknown") String networkQuality) {
 
         // Si join falla (404, 409) la excepcion corta aqui y no se emite nada.
         ActivityDtos.ActivityResponse response = activityService.join(user, id);
@@ -174,7 +176,9 @@ public class ActivityController {
                 parseFreeMinutes(freeTimeMinutes),
                 activityDurationMinutes,
                 response.title(),
-                "Gratis");
+                "Gratis",
+                networkQuality
+                );
         }
         return ResponseEntity.ok(response);
     }

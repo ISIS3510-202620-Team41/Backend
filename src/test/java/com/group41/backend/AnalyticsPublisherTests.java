@@ -1,12 +1,5 @@
 package com.group41.backend;
 
-import com.group41.backend.analytics.AnalyticsPublisher;
-import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -19,6 +12,13 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import com.group41.backend.analytics.AnalyticsPublisher;
+import com.sun.net.httpserver.HttpServer;
 
 @DisplayName("Analytics - publicador de eventos")
 class AnalyticsPublisherTests {
@@ -68,7 +68,7 @@ class AnalyticsPublisherTests {
     void recommendationShownIsPosted() throws Exception {
         AnalyticsPublisher publisher = new AnalyticsPublisher(true, engineUrl(), "llave-secreta");
 
-        publisher.recommendationShown(userId, "rec-123", 75);
+        publisher.recommendationShown(userId, "rec-123", 75, "good");
 
         Received request = next();
         assertThat(request).isNotNull();
@@ -162,7 +162,8 @@ class AnalyticsPublisherTests {
                 180,
                 120,
                 "Torneo Futbol 5",
-                "$15.000 COP");
+                "$15.000 COP", 
+                "good");
 
         Received request = next();
         assertThat(request).isNotNull();
@@ -208,7 +209,7 @@ class AnalyticsPublisherTests {
 
         long startedAt = System.nanoTime();
         assertThatCode(() -> {
-            publisher.recommendationShown(userId, "rec-1", 10);
+            publisher.recommendationShown(userId, "rec-1", 10, "poor");
             publisher.activitySelected(userId, "act-1", "CULTURA", "rec-1", null, 60);
             publisher.friendAvailabilityUsed(userId, "viewed");
         }).doesNotThrowAnyException();

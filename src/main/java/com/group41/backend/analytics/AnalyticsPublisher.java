@@ -1,13 +1,5 @@
 package com.group41.backend.analytics;
 
-import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -16,6 +8,15 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import jakarta.annotation.PreDestroy;
 
 /**
  * Envia eventos al analytics engine sin bloquear nunca una peticion.
@@ -54,10 +55,11 @@ public class AnalyticsPublisher {
         this.http = RestClient.builder().baseUrl(url).requestFactory(factory).build();
     }
 
-    public void recommendationShown(UUID userId, String recommendationId, int freeTimeMinutes) {
+    public void recommendationShown(UUID userId, String recommendationId, int freeTimeMinutes, String networkQuality) {
         send(event("recommendation_shown", userId, Map.of(
                 "recommendationId", recommendationId,
-                "freeTimeMinutes", freeTimeMinutes)));
+                "freeTimeMinutes", freeTimeMinutes,
+            "networkQuallity",networkQuality)));
     }
 
 
@@ -69,31 +71,34 @@ public class AnalyticsPublisher {
     }
 
     // Original method with title and price.
+    @SuppressWarnings("java:S107")
     public void activitySelected(UUID userId, String activityId, String category,
-                                 String recommendationId, Integer freeTimeMinutes,
-                                 String title, String price) {
+                                String recommendationId, Integer freeTimeMinutes,
+                                String title, String price, String networkQuality) {
         activitySelected(userId, activityId, category, recommendationId,
-                freeTimeMinutes, null, title, price);
+                freeTimeMinutes, null, title, price, networkQuality);
     }
 
     // New method for BQ7: includes the activity duration.
     public void activitySelected(UUID userId, String activityId, String category,
-                                 String recommendationId, Integer freeTimeMinutes,
-                                 Integer activityDurationMinutes) {
+                                String recommendationId, Integer freeTimeMinutes,
+                                Integer activityDurationMinutes) {
         activitySelected(userId, activityId, category, recommendationId,
-                freeTimeMinutes, activityDurationMinutes, null, null);
+            freeTimeMinutes, activityDurationMinutes, null, null, null);
     }
 
     // Main implementation: builds the complete analytics event.
+        @SuppressWarnings("java:S107")
     public void activitySelected(UUID userId, String activityId, String category,
                                  String recommendationId, Integer freeTimeMinutes,
                                  Integer activityDurationMinutes,
-                                 String title, String price) {
+                                 String title, String price, String networkQuality) {
         Map<String, Object> extra = new LinkedHashMap<>();
 
         extra.put("activityId", activityId);
         extra.put("category", category);
         extra.put("recommendationId", recommendationId);
+        extra.put("networkQuality", networkQuality);
 
         if (freeTimeMinutes != null) {
             extra.put("freeTimeMinutes", freeTimeMinutes);
