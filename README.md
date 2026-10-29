@@ -165,9 +165,11 @@ Everything lives under `/api`. JSON, except image and `.ics` uploads which are `
 | Method | Route | Params | What it does |
 |---|---|---|---|
 | `POST` | `/api/activities` | JSON body | Creates an activity |
-| `GET` | `/api/activities` | `?lat=4.6&lon=-74.0&radius=1.0` | Nearby upcoming activities, closest first |
-| `GET` | `/api/activities/recommendations` | `?lat=4.6&lon=-74.0` and optional `&radius=`, `&tz=` | Activities ranked by preferences and distance. Also returns the `X-Recommendation-Id` and `X-Free-Time-Minutes` response headers (see [Analytics](#analytics)) |
-| `POST` | `/api/activities/{id}/join` | optional `?recommendationId=` and `&freeTimeMinutes=` | Joins the activity and updates the user's preferences. The two params are only sent when joining from a recommendations list |
+| `GET` | `/api/activities/{id}` | optional `?lat=&lon=` | Details of a single activity. Returns `Cache-Control: public, max-age=300` |
+| `POST` | `/api/activities/{id}/image` | `multipart/form-data` (`file`) | Uploads or updates the activity photo |
+| `GET` | `/api/activities` | `?lat=4.6&lon=-74.0&radius=1.0` | Nearby upcoming activities, closest first. Returns `Cache-Control: public, max-age=300` |
+| `GET` | `/api/activities/recommendations` | `?lat=4.6&lon=-74.0` and optional `&radius=`, `&tz=` | Activities ranked by preferences and distance. Returns `Cache-Control: public, max-age=300`, `X-Recommendation-Id` and `X-Free-Time-Minutes` |
+| `POST` | `/api/activities/{id}/join` | optional `?recommendationId=` and `&freeTimeMinutes=` | Joins the activity and updates the user's preferences |
 | `DELETE` | `/api/activities/{id}/leave` | — | Cancels the enrollment |
 
 ### Bodies
@@ -272,11 +274,15 @@ The first three respond with the same shape:
   "endTime": "2026-10-05T19:00:00-05:00",
   "locationName": "University courts",
   "latitude": 4.6382,
-  "longitude": -74.0840
+  "longitude": -74.0840,
+  "price": "$15.000",
+  "capacity": 10,
+  "aboutLocation": "Canchas sintéticas con iluminación nocturna",
+  "imageUrl": "https://example.com/foto.jpg"
 }
 ```
 
-`category` is one of `DEPORTES`, `ESTUDIO`, `CULTURA`, `ENTRETENIMIENTO`. `description` is optional.
+`category` is one of `DEPORTES`, `ESTUDIO`, `CULTURA`, `ENTRETENIMIENTO`. `description`, `price` (default `"Gratis"`), `capacity`, `aboutLocation` and `imageUrl` are optional.
 
 Activities are returned as:
 
@@ -288,11 +294,16 @@ Activities are returned as:
   "category": "DEPORTES",
   "startTime": "2026-10-05T17:00:00-05:00",
   "endTime": "2026-10-05T19:00:00-05:00",
+  "durationMinutes": 120,
   "locationName": "University courts",
   "latitude": 4.6382,
   "longitude": -74.0840,
   "distanceKm": 0.35,
   "participants": 3,
+  "capacity": 10,
+  "price": "$15.000",
+  "aboutLocation": "Canchas sintéticas con iluminación nocturna",
+  "imageUrl": "http://localhost:8080/uploads/activity-uuid.jpg",
   "joined": false
 }
 ```

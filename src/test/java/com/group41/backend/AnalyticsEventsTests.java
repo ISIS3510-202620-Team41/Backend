@@ -215,7 +215,14 @@ class AnalyticsEventsTests {
         join(activity.getId(), recommendationId, "45").andExpect(status().isOk());
 
         verify(analytics).activitySelected(
-                alice.id(), activity.getId().toString(), "DEPORTES", recommendationId, 45);
+            alice.id(),
+            activity.getId().toString(),
+            "DEPORTES",
+            recommendationId,
+            45,
+            120,
+            activity.getTitle(),
+            "Gratis");
     }
 
     @Test
@@ -242,13 +249,27 @@ class AnalyticsEventsTests {
         Activity second = save("Dos", Category.ESTUDIO, 0.2);
         join(second.getId(), recommendationId, "abc").andExpect(status().isOk());
         verify(analytics).activitySelected(
-                alice.id(), second.getId().toString(), "ESTUDIO", recommendationId, null);
+            alice.id(),
+            second.getId().toString(),
+            "ESTUDIO",
+            recommendationId,
+            null,
+            120,
+            second.getTitle(),
+            "Gratis");
 
         // freeTimeMinutes negativo: tambien se descarta.
         Activity third = save("Tres", Category.CULTURA, 0.3);
         join(third.getId(), recommendationId, "-5").andExpect(status().isOk());
         verify(analytics).activitySelected(
-                alice.id(), third.getId().toString(), "CULTURA", recommendationId, null);
+        alice.id(),
+        third.getId().toString(),
+        "CULTURA",
+        recommendationId,
+        null,
+        120,
+        third.getTitle(),
+        "Gratis");
     }
 
     @Test
@@ -263,7 +284,9 @@ class AnalyticsEventsTests {
         join(activity.getId(), recommendationId, "45").andExpect(status().isOk());
         join(activity.getId(), recommendationId, "45").andExpect(status().isConflict());
 
-        verify(analytics, times(1)).activitySelected(any(), any(), any(), any(), any());
+        verify(analytics, times(1)).activitySelected(
+        any(), any(), any(), any(),
+        any(), any(), any(), any());
     }
 
     // ------------------------------------------------------------- friends/gaps
