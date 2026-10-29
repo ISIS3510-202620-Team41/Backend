@@ -1,8 +1,12 @@
 package com.group41.backend.activity.controller;
 
+import java.util.List;
+import java.util.UUID;
+
 import com.group41.backend.activity.service.ActivityService;
 import com.group41.backend.analytics.AnalyticsPublisher;
 import com.group41.backend.schedule.service.ScheduleService;
+import com.group41.backend.storage.ActivityStorageService;
 import com.group41.backend.user.domain.User;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
