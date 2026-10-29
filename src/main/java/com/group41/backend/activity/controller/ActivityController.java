@@ -1,10 +1,8 @@
 package com.group41.backend.activity.controller;
 
-import com.group41.backend.activity.service.ActivityService;
-import com.group41.backend.analytics.AnalyticsPublisher;
-import com.group41.backend.schedule.service.ScheduleService;
-import com.group41.backend.user.domain.User;
-import jakarta.validation.Valid;
+import java.util.List;
+import java.util.UUID;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -17,8 +15,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.UUID;
+import com.group41.backend.activity.service.ActivityService;
+import com.group41.backend.analytics.AnalyticsPublisher;
+import com.group41.backend.schedule.service.ScheduleService;
+import com.group41.backend.user.domain.User;
+
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/activities")
@@ -42,8 +44,18 @@ public class ActivityController {
     @PostMapping
     public ResponseEntity<ActivityDtos.ActivityResponse> create(
             @AuthenticationPrincipal User user,
-            @Valid @RequestBody ActivityDtos.CreateActivityRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(activityService.create(user, request));
+            @Valid @RequestBody ActivityDtos.CreateActivityRequest request,
+            @RequestParam (value = "source", required = false) String source) {
+        ActivityDtos.ActivityResponse response = activityService.create(user, request);
+        if ("friend_availability".equals(source)) {
+            analytics.friendAvailabilityUsed(
+                    user.getId(),
+            "plan_created"
+            );
+        }
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+        .body(response);   
     }
 
     /** Actividades cercanas. radius en km (por defecto 1, maximo 50). */
@@ -101,10 +113,18 @@ public class ActivityController {
             @AuthenticationPrincipal User user,
             @PathVariable UUID id,
             @RequestParam(value = "recommendationId", required = false) String recommendationId,
-            @RequestParam(value = "freeTimeMinutes", required = false) String freeTimeMinutes) {
+            @RequestParam(value = "freeTimeMinutes", required = false) String freeTimeMinutes,
+            @RequestParam(value = "source", required = false) String source) {
 
         // Si join falla (404, 409) la excepcion corta aqui y no se emite nada.
         ActivityDtos.ActivityResponse response = activityService.join(user, id);
+
+        if ("friend_availability".equals(source)) {
+            analytics.friendAvailabilityUsed(
+                user.getId(),
+        "plan_joined"
+        );
+        }
 
         String validRecommendationId = parseUuid(recommendationId);
         if (validRecommendationId != null) {
