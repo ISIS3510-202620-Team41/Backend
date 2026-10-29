@@ -1,14 +1,11 @@
 package com.group41.backend.activity.controller;
 
+import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
 
-import com.group41.backend.activity.service.ActivityService;
-import com.group41.backend.analytics.AnalyticsPublisher;
-import com.group41.backend.schedule.service.ScheduleService;
-import com.group41.backend.storage.ActivityStorageService;
-import com.group41.backend.user.domain.User;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,13 +19,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import java.time.Duration;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeParseException;
 
 import com.group41.backend.activity.service.ActivityService;
 import com.group41.backend.analytics.AnalyticsPublisher;
 import com.group41.backend.schedule.service.ScheduleService;
+import com.group41.backend.storage.ActivityStorageService;
 import com.group41.backend.user.domain.User;
 
 import jakarta.validation.Valid;
