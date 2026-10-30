@@ -59,7 +59,7 @@ public class AnalyticsPublisher {
         send(event("recommendation_shown", userId, Map.of(
                 "recommendationId", recommendationId,
                 "freeTimeMinutes", freeTimeMinutes,
-            "networkQuallity",networkQuality)));
+            "networkQuality",networkQuality)));
     }
 
 
