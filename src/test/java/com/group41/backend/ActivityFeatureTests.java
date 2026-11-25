@@ -8,9 +8,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -18,6 +21,12 @@ import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -27,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -53,6 +63,9 @@ class ActivityFeatureTests {
 
     @Autowired
     private UserPreferenceRepository preferenceRepository;
+
+    @Value("${app.storage.upload-dir}")
+    private Path uploadDir;
 
     private static int counter = 0;
     private Account alice;
@@ -122,6 +135,42 @@ class ActivityFeatureTests {
                 .header("Authorization", "Bearer " + who.token())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
+    }
+
+    @Test
+    void publicActivityImageCanBeCachedForOneDay() throws Exception {
+        ZonedDateTime start = inDays(2);
+        MvcResult activity = create(alice, createBody("Futbol", start, start.plusHours(2), baseLat))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String id = objectMapper.readTree(activity.getResponse().getContentAsString()).get("id").asString();
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "jpg", jpeg);
+
+        MvcResult upload = mockMvc.perform(multipart("/api/activities/{id}/image", id)
+                        .file(new MockMultipartFile("file", "photo.jpg", "image/jpeg", jpeg.toByteArray()))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + alice.token()))
+                .andExpect(status().isOk())
+                .andReturn();
+        String imageUrl = objectMapper.readTree(upload.getResponse().getContentAsString()).get("imageUrl").asString();
+        String imagePath = URI.create(imageUrl).getPath();
+        Path storedImage = uploadDir.resolve(Path.of(imagePath.substring(1)).getFileName());
+
+        try {
+            MvcResult image = mockMvc.perform(get(imagePath))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "max-age=86400, public"))
+                    .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                    .andReturn();
+            assertThat(image.getResponse().getContentAsByteArray()).isEqualTo(Files.readAllBytes(storedImage));
+
+            mockMvc.perform(get(imagePath).header(HttpHeaders.IF_MODIFIED_SINCE,
+                            image.getResponse().getHeader(HttpHeaders.LAST_MODIFIED)))
+                    .andExpect(status().isNotModified())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "max-age=86400, public"));
+        } finally {
+            Files.deleteIfExists(storedImage);
+        }
     }
 
     private ResultActions nearby(Account who, double radiusKm) throws Exception {
