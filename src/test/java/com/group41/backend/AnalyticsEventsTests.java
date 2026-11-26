@@ -10,6 +10,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,6 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -229,13 +232,15 @@ class AnalyticsEventsTests {
     }
 
     @Test
-    @DisplayName("unirse sin recommendationId (busqueda normal) no emite nada")
-    void joinWithoutRecommendationEmitsNothing() throws Exception {
+    @DisplayName("unirse sin recommendationId solo emite la inscripcion confirmada")
+    void joinWithoutRecommendationEmitsEnrollment() throws Exception {
         Activity activity = save("Futbol", Category.DEPORTES, 0.1);
 
         join(activity.getId(), null, null).andExpect(status().isOk());
 
-        verifyNoInteractions(analytics);
+        verify(analytics).activityEnrollmentConfirmed(any(), eq(alice.id()), eq(activity.getId()),
+                eq(activity.getStartTime().toInstant()), any());
+        verify(analytics, never()).activitySelected(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -243,10 +248,12 @@ class AnalyticsEventsTests {
     void badAnalyticsParamsNeverBlockJoin() throws Exception {
         String recommendationId = UUID.randomUUID().toString();
 
-        // recommendationId que no es UUID: se une, pero no se emite.
+        // Un recommendationId invalido no impide confirmar la inscripcion.
         Activity first = save("Uno", Category.DEPORTES, 0.1);
         join(first.getId(), "no-es-un-uuid", "45").andExpect(status().isOk());
-        verifyNoInteractions(analytics);
+        verify(analytics).activityEnrollmentConfirmed(any(), eq(alice.id()), eq(first.getId()),
+                eq(first.getStartTime().toInstant()), any());
+        verify(analytics, never()).activitySelected(any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         // freeTimeMinutes que no es un numero: se emite sin los minutos.
         Activity second = save("Dos", Category.ESTUDIO, 0.2);
@@ -292,8 +299,50 @@ class AnalyticsEventsTests {
         join(activity.getId(), recommendationId, "45").andExpect(status().isConflict());
 
         verify(analytics, times(1)).activitySelected(
-        any(), any(), any(), any(),
-        any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(analytics, times(1)).activityEnrollmentConfirmed(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("una cancelacion exitosa emite una vez y reinscribirse crea un nuevo ID")
+    void cancellationAndReenrollmentEmitDistinctTransitions() throws Exception {
+        Activity activity = save("Yoga", Category.DEPORTES, 0.1);
+        join(activity.getId(), null, null).andExpect(status().isOk());
+
+        String leaveUrl = "/api/activities/" + activity.getId() + "/leave";
+        mockMvc.perform(delete(leaveUrl).header("Authorization", "Bearer " + alice.token()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete(leaveUrl).header("Authorization", "Bearer " + alice.token()))
+                .andExpect(status().isNotFound());
+        join(activity.getId(), null, null).andExpect(status().isOk());
+
+        var enrollmentIds = org.mockito.ArgumentCaptor.forClass(UUID.class);
+        verify(analytics, times(2)).activityEnrollmentConfirmed(enrollmentIds.capture(),
+                eq(alice.id()), eq(activity.getId()), eq(activity.getStartTime().toInstant()), any());
+        assertThat(enrollmentIds.getAllValues()).doesNotHaveDuplicates();
+        verify(analytics).activityEnrollmentCanceled(eq(enrollmentIds.getAllValues().getFirst()),
+                eq(alice.id()), eq(activity.getId()), eq(activity.getStartTime().toInstant()), any());
+    }
+
+    @Test
+    @DisplayName("un fallo de analitica conserva las respuestas de inscripcion y cancelacion")
+    void analyticsFailurePreservesEnrollmentResponses() throws Exception {
+        Activity activity = save("Yoga", Category.DEPORTES, 0.1);
+        doThrow(new IllegalStateException("Analytics unavailable"))
+                .when(analytics).activityEnrollmentConfirmed(any(), any(), any(), any(), any());
+        doThrow(new IllegalStateException("Analytics unavailable"))
+                .when(analytics).activityEnrollmentCanceled(any(), any(), any(), any(), any());
+
+        join(activity.getId(), null, null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.joined").value(true));
+        join(activity.getId(), null, null).andExpect(status().isConflict());
+
+        String leaveUrl = "/api/activities/" + activity.getId() + "/leave";
+        mockMvc.perform(delete(leaveUrl).header("Authorization", "Bearer " + alice.token()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete(leaveUrl).header("Authorization", "Bearer " + alice.token()))
+                .andExpect(status().isNotFound());
     }
 
     // ------------------------------------------------------------- friends/gaps

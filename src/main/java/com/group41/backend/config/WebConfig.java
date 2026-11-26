@@ -9,6 +9,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 
 /**
  * Sirve las fotos subidas en /uploads/** desde la carpeta local.
@@ -27,8 +28,12 @@ public class WebConfig implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         Path path = Paths.get(uploadDir).toAbsolutePath().normalize();
 
+        String location = path.toUri().toString();
+        registry.addResourceHandler("/uploads/activity-*.jpg")
+                .addResourceLocations(location)
+                .setCacheControl(CacheControl.maxAge(Duration.ofDays(1)).cachePublic());
         registry.addResourceHandler("/uploads/**")
-                .addResourceLocations(path.toUri().toString())
+                .addResourceLocations(location)
                 .setCacheControl(
                         CacheControl.maxAge(1, TimeUnit.DAYS).cachePublic()
                 );
