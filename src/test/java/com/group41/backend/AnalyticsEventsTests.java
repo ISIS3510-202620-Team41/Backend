@@ -40,6 +40,7 @@ import com.group41.backend.schedule.repository.TimeBlockRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import static org.mockito.ArgumentMatchers.eq;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -152,7 +153,7 @@ class AnalyticsEventsTests {
         assertThat(UUID.fromString(recommendationId)).isNotNull(); // lanza si no es un UUID
         assertThat(freeMinutes).isBetween(0, 960); // la ventana 06:00-22:00 dura 960 minutos
 
-        verify(analytics).recommendationShown(alice.id(), recommendationId, freeMinutes, null);
+        verify(analytics).recommendationShown(alice.id(), recommendationId, freeMinutes, "unknown");
     }
 
     @Test
@@ -178,7 +179,7 @@ class AnalyticsEventsTests {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Free-Time-Minutes", "0"));
 
-        verify(analytics).recommendationShown(any(), any(), org.mockito.ArgumentMatchers.eq(0), null);
+        verify(analytics).recommendationShown(any(), any(), eq(0), eq("unknown"));
     }
 
     @Test
@@ -224,7 +225,7 @@ class AnalyticsEventsTests {
             120,
             activity.getTitle(),
             "Gratis",
-            "good");
+            "unknown");
     }
 
     @Test
@@ -259,7 +260,7 @@ class AnalyticsEventsTests {
             120,
             second.getTitle(),
             "Gratis",
-            "good"
+            "unknown"
             );
 
         // freeTimeMinutes negativo: tambien se descarta.
@@ -274,7 +275,8 @@ class AnalyticsEventsTests {
         120,
         third.getTitle(),
         "Gratis",
-        "poor");
+        "unknown"
+        );
     }
 
     @Test
@@ -291,7 +293,7 @@ class AnalyticsEventsTests {
 
         verify(analytics, times(1)).activitySelected(
         any(), any(), any(), any(),
-        any(), any(), any(), any());
+        any(), any(), any(), any(), any());
     }
 
     // ------------------------------------------------------------- friends/gaps

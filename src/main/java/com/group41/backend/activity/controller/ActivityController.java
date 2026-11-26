@@ -89,16 +89,43 @@ public class ActivityController {
         return ResponseEntity.ok(activityStorageService.storeActivityImage(user, id, file));
     }
 
-    /** Actividades cercanas. radius en km (por defecto 1, maximo 50). */
+    /** Actividades cercanas paginadas. Radius en km (por defecto 1, máximo 50). */
     @GetMapping
-    public ResponseEntity<List<ActivityDtos.ActivityResponse>> nearby(
+    public ResponseEntity<ActivityDtos.PageResponse<ActivityDtos.ActivityResponse>> nearby(
             @AuthenticationPrincipal User user,
             @RequestParam("lat") double lat,
             @RequestParam("lon") double lon,
-            @RequestParam(value = "radius", required = false) Double radius) {
+            @RequestParam(value = "radius", required = false) Double radius,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size
+    ) {
         return ResponseEntity.ok()
                 .header("Cache-Control", CACHE_HEADER_VALUE)
-                .body(activityService.nearby(user, lat, lon, radius));
+                .body(activityService.nearby(
+                        user,
+                        lat,
+                        lon,
+                        radius,
+                        page,
+                        size
+                ));
+    }
+
+    /**
+     * Devuelve las actividades en las que está inscrito el usuario autenticado.
+     */
+    @GetMapping("/joined")
+    public ResponseEntity<ActivityDtos.PageResponse<ActivityDtos.JoinedActivityResponse>> joinedActivities(
+            @AuthenticationPrincipal User user,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok()
+                .body(activityService.joinedActivities(
+                        user,
+                        page,
+                        size
+                ));
     }
 
     /**

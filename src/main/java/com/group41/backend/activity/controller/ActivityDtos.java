@@ -1,3 +1,4 @@
+
 package com.group41.backend.activity.controller;
 
 import com.group41.backend.activity.domain.Category;
@@ -10,6 +11,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.ZonedDateTime;
+import java.util.List;
 
 /** Contratos de /api/activities. */
 public final class ActivityDtos {
@@ -35,15 +37,6 @@ public final class ActivityDtos {
 
     /**
      * Fechas en ISO 8601 con offset.
-     *
-     * @param durationMinutes duracion calculada en minutos
-     * @param distanceKm   distancia al punto consultado; null cuando no hay punto (crear, unirse)
-     * @param participants cuantas personas estan inscritas
-     * @param capacity     cupo maximo de participantes (null = sin limite)
-     * @param price        precio o "Gratis"
-     * @param aboutLocation descripcion del lugar
-     * @param imageUrl     URL de la foto de la actividad
-     * @param joined       si quien consulta esta inscrito
      */
     public record ActivityResponse(
             String id,
@@ -68,5 +61,31 @@ public final class ActivityDtos {
 
     /** Actividad recomendada con su puntaje (0 a 1, mayor es mejor). */
     public record RecommendedActivity(ActivityResponse activity, double score) {
+    }
+
+    /** Respuesta genérica para endpoints paginados. */
+    public record PageResponse<T>(
+            List<T> content,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages,
+            boolean hasNext
+    ) {
+    }
+
+    /** Información de la inscripción del usuario. */
+    public record EnrollmentResponse(
+            String id,
+            String joinedAt,
+            String status
+    ) {
+    }
+
+    /** Actividad junto con los datos de la inscripción correspondiente. */
+    public record JoinedActivityResponse(
+            ActivityResponse activity,
+            EnrollmentResponse enrollment
+    ) {
     }
 }

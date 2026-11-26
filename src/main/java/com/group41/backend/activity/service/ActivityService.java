@@ -4,16 +4,18 @@ import com.group41.backend.activity.controller.ActivityDtos;
 import com.group41.backend.activity.domain.Activity;
 import com.group41.backend.activity.domain.UserActivity;
 import com.group41.backend.activity.repository.ActivityRepository;
+import com.group41.backend.activity.repository.JoinedActivityRow;
 import com.group41.backend.activity.repository.UserActivityRepository;
 import com.group41.backend.activity.service.RecommendationEngine.Candidate;
 import com.group41.backend.activity.service.RecommendationEngine.Ranked;
 import com.group41.backend.common.ApiException;
 import com.group41.backend.user.domain.User;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import org.springframework.data.domain.Page;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -33,6 +35,7 @@ public class ActivityService {
     private static final double DEFAULT_RECOMMENDATION_RADIUS_KM = 5.0;
     private static final double MAX_RADIUS_KM = 50.0;
     private static final int MAX_RECOMMENDATIONS = 20;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final ActivityRepository activityRepository;
     private final UserActivityRepository userActivityRepository;
@@ -89,14 +92,144 @@ public class ActivityService {
         return toResponse(saved, null, 0, false);
     }
 
-    /** Actividades vigentes dentro del radio, de la mas cercana a la mas lejana. */
+    /**
+     * Actividades vigentes dentro del radio, de la más cercana a la más lejana.
+     * Los candidatos se filtran y ordenan antes de aplicar la paginación.
+     */
     @Transactional(readOnly = true)
-    public List<ActivityDtos.ActivityResponse> nearby(User me, double lat, double lon, Double radiusKm) {
+    public ActivityDtos.PageResponse<ActivityDtos.ActivityResponse> nearby(
+            User me,
+            double lat,
+            double lon,
+            Double radiusKm,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
         validateCoordinates(lat, lon);
+
         double radius = resolveRadius(radiusKm, DEFAULT_SEARCH_RADIUS_KM);
 
-        Set<UUID> joined = new HashSet<>(userActivityRepository.findActivityIdsByUserId(me.getId()));
-        return toResponses(findCandidates(lat, lon, radius), joined);
+        List<Candidate> candidates = findCandidates(lat, lon, radius);
+
+        long totalElements = candidates.size();
+        int totalPages = (int) Math.ceil((double) totalElements / size);
+
+        long offset = (long) page * size;
+
+        if (offset >= totalElements) {
+            return new ActivityDtos.PageResponse<>(
+                    List.of(),
+                    page,
+                    size,
+                    totalElements,
+                    totalPages,
+                    false
+            );
+        }
+
+        int fromIndex = (int) offset;
+        int toIndex = (int) Math.min(offset + size, totalElements);
+
+        List<Candidate> pageCandidates = candidates.subList(fromIndex, toIndex);
+
+        List<UUID> activityIds = pageCandidates.stream()
+                .map(candidate -> candidate.activity().getId())
+                .toList();
+
+        Set<UUID> joined = activityIds.isEmpty()
+                ? Set.of()
+                : new HashSet<>(userActivityRepository.findJoinedActivityIds(
+                        me.getId(),
+                        activityIds
+                ));
+
+        List<ActivityDtos.ActivityResponse> content =
+                toResponses(pageCandidates, joined);
+
+        return new ActivityDtos.PageResponse<>(
+                content,
+                page,
+                size,
+                totalElements,
+                totalPages,
+                offset + content.size() < totalElements
+        );
+    }
+
+    /**
+     * Actividades en las que está inscrito el usuario autenticado.
+     * Prioriza las actividades futuras y después muestra las pasadas.
+     */
+    @Transactional(readOnly = true)
+    public ActivityDtos.PageResponse<ActivityDtos.JoinedActivityResponse> joinedActivities(
+            User me,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
+
+        Page<JoinedActivityRow> result =
+                userActivityRepository.findJoinedActivities(
+                        me.getId(),
+                        ZonedDateTime.now(),
+                        PageRequest.of(page, size)
+                );
+
+        List<UUID> activityIds = result.getContent().stream()
+                .map(row -> row.activity().getId())
+                .toList();
+
+        Map<UUID, Long> participantCounts = new HashMap<>();
+
+        if (!activityIds.isEmpty()) {
+            userActivityRepository.countByActivityIds(activityIds)
+                    .forEach(count -> participantCounts.put(
+                            count.getActivityId(),
+                            count.getTotal()
+                    ));
+        }
+
+        List<ActivityDtos.JoinedActivityResponse> content =
+                result.getContent().stream()
+                        .map(row -> {
+                            Activity activity = row.activity();
+
+                            ActivityDtos.ActivityResponse activityResponse =
+                                    toResponse(
+                                            activity,
+                                            null,
+                                            participantCounts.getOrDefault(
+                                                    activity.getId(),
+                                                    0L
+                                            ).intValue(),
+                                            true
+                                    );
+
+                            ActivityDtos.EnrollmentResponse enrollmentResponse =
+                                    new ActivityDtos.EnrollmentResponse(
+                                            row.enrollmentId().toString(),
+                                            DateTimeFormatter.ISO_INSTANT.format(
+                                                    row.joinedAt()
+                                            ),
+                                            "CONFIRMED"
+                                    );
+
+                            return new ActivityDtos.JoinedActivityResponse(
+                                    activityResponse,
+                                    enrollmentResponse
+                            );
+                        })
+                        .toList();
+
+        return new ActivityDtos.PageResponse<>(
+                content,
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.hasNext()
+        );
     }
 
     /** Actividades cercanas en las que no estoy inscrito, ordenadas por preferencias y distancia. */
@@ -185,15 +318,40 @@ public class ActivityService {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Bounding Box en la consulta, distancia exacta en memoria. */
-    private List<Candidate> findCandidates(double lat, double lon, double radiusKm) {
+    /**
+     * Bounding Box en la consulta, distancia exacta en memoria.
+     * Ordena por distancia y utiliza el ID como desempate determinista.
+     */
+    private List<Candidate> findCandidates(
+            double lat,
+            double lon,
+            double radiusKm
+    ) {
         GeoUtils.BoundingBox box = GeoUtils.boundingBox(lat, lon, radiusKm);
 
         return activityRepository
-                .findInBox(box.minLat(), box.maxLat(), box.minLon(), box.maxLon(), ZonedDateTime.now()).stream()
-                .map(a -> new Candidate(a, GeoUtils.distanceKm(lat, lon, a.getLatitude(), a.getLongitude())))
-                .filter(c -> c.distanceKm() <= radiusKm)
-                .sorted(Comparator.comparingDouble(Candidate::distanceKm))
+                .findInBox(
+                        box.minLat(),
+                        box.maxLat(),
+                        box.minLon(),
+                        box.maxLon(),
+                        ZonedDateTime.now()
+                )
+                .stream()
+                .map(activity -> new Candidate(
+                        activity,
+                        GeoUtils.distanceKm(
+                                lat,
+                                lon,
+                                activity.getLatitude(),
+                                activity.getLongitude()
+                        )
+                ))
+                .filter(candidate -> candidate.distanceKm() <= radiusKm)
+                .sorted(
+                        Comparator.comparingDouble(Candidate::distanceKm)
+                                .thenComparing(candidate -> candidate.activity().getId())
+                )
                 .toList();
     }
 
@@ -266,5 +424,21 @@ public class ActivityService {
     private static double round(double value, int decimals) {
         double factor = Math.pow(10, decimals);
         return Math.round(value * factor) / factor;
+    }
+
+    private static void validatePagination(int page, int size) {
+        if (page < 0) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "La pagina no puede ser negativa"
+            );
+        }
+
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "El tamaño debe estar entre 1 y " + MAX_PAGE_SIZE
+            );
+        }
     }
 }

@@ -1,3 +1,4 @@
+
 package com.group41.backend;
 
 import com.group41.backend.activity.domain.Activity;
@@ -8,9 +9,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -18,6 +22,12 @@ import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -27,11 +37,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -53,6 +63,9 @@ class ActivityFeatureTests {
 
     @Autowired
     private UserPreferenceRepository preferenceRepository;
+
+    @Value("${app.storage.upload-dir}")
+    private Path uploadDir;
 
     private static int counter = 0;
     private Account alice;
@@ -119,17 +132,30 @@ class ActivityFeatureTests {
 
     private ResultActions create(Account who, String body) throws Exception {
         return mockMvc.perform(post("/api/activities")
-                .header("Authorization", "Bearer " + who.token())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
     }
 
     private ResultActions nearby(Account who, double radiusKm) throws Exception {
+        return nearby(who, radiusKm, 0, 10);
+    }
+
+    private ResultActions nearby(Account who, double radiusKm, int page, int size) throws Exception {
         return mockMvc.perform(get("/api/activities")
                 .param("lat", String.valueOf(baseLat))
                 .param("lon", "-74.0")
                 .param("radius", String.valueOf(radiusKm))
-                .header("Authorization", "Bearer " + who.token()));
+                .param("page", String.valueOf(page))
+                .param("size", String.valueOf(size))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token()));
+    }
+
+    private ResultActions joinedActivities(Account who, int page, int size) throws Exception {
+        return mockMvc.perform(get("/api/activities/joined")
+                .param("page", String.valueOf(page))
+                .param("size", String.valueOf(size))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token()));
     }
 
     private ResultActions recommendations(Account who, double radiusKm) throws Exception {
@@ -137,17 +163,62 @@ class ActivityFeatureTests {
                 .param("lat", String.valueOf(baseLat))
                 .param("lon", "-74.0")
                 .param("radius", String.valueOf(radiusKm))
-                .header("Authorization", "Bearer " + who.token()));
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token()));
     }
 
     private ResultActions join(Account who, Object activityId) throws Exception {
         return mockMvc.perform(post("/api/activities/" + activityId + "/join")
-                .header("Authorization", "Bearer " + who.token()));
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token()));
     }
 
     private ResultActions leave(Account who, Object activityId) throws Exception {
         return mockMvc.perform(delete("/api/activities/" + activityId + "/leave")
-                .header("Authorization", "Bearer " + who.token()));
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + who.token()));
+    }
+
+    // ------------------------------------------------------------------ imagenes
+
+    @Test
+    void publicActivityImageCanBeCachedForOneDay() throws Exception {
+        ZonedDateTime start = inDays(2);
+        MvcResult activity = create(alice, createBody("Futbol", start, start.plusHours(2), baseLat))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String id = objectMapper.readTree(activity.getResponse().getContentAsString())
+                .get("id").asString();
+
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "jpg", jpeg);
+
+        MvcResult upload = mockMvc.perform(multipart("/api/activities/{id}/image", id)
+                        .file(new MockMultipartFile("file", "photo.jpg", "image/jpeg", jpeg.toByteArray()))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + alice.token()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String imageUrl = objectMapper.readTree(upload.getResponse().getContentAsString())
+                .get("imageUrl").asString();
+        String imagePath = URI.create(imageUrl).getPath();
+        Path storedImage = uploadDir.resolve(Path.of(imagePath.substring(1)).getFileName());
+
+        try {
+            MvcResult image = mockMvc.perform(get(imagePath))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "max-age=86400, public"))
+                    .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                    .andReturn();
+
+            assertThat(image.getResponse().getContentAsByteArray())
+                    .isEqualTo(Files.readAllBytes(storedImage));
+
+            mockMvc.perform(get(imagePath).header(HttpHeaders.IF_MODIFIED_SINCE,
+                            image.getResponse().getHeader(HttpHeaders.LAST_MODIFIED)))
+                    .andExpect(status().isNotModified())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "max-age=86400, public"));
+        } finally {
+            Files.deleteIfExists(storedImage);
+        }
     }
 
     // ------------------------------------------------------------------ acceso
@@ -157,10 +228,17 @@ class ActivityFeatureTests {
     void endpointsRequireAuth() throws Exception {
         mockMvc.perform(get("/api/activities").param("lat", "4.6").param("lon", "-74.0"))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/api/activities/recommendations").param("lat", "4.6").param("lon", "-74.0"))
+
+        mockMvc.perform(get("/api/activities/joined"))
                 .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(get("/api/activities/recommendations")
+                        .param("lat", "4.6").param("lon", "-74.0"))
+                .andExpect(status().isUnauthorized());
+
         mockMvc.perform(post("/api/activities/" + UUID.randomUUID() + "/join"))
                 .andExpect(status().isUnauthorized());
+
         mockMvc.perform(delete("/api/activities/" + UUID.randomUUID() + "/leave"))
                 .andExpect(status().isUnauthorized());
     }
@@ -180,8 +258,8 @@ class ActivityFeatureTests {
 
         nearby(bob, 1.0)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].title").value("Futbol"));
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("Futbol"));
     }
 
     @Test
@@ -210,23 +288,27 @@ class ActivityFeatureTests {
         String auth = "Bearer " + alice.token();
 
         mockMvc.perform(get("/api/activities").param("lat", "95").param("lon", "-74")
-                        .header("Authorization", auth))
+                        .header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(get("/api/activities").param("lat", "4.6").param("lon", "-74").param("radius", "0")
-                        .header("Authorization", auth))
+
+        mockMvc.perform(get("/api/activities").param("lat", "4.6").param("lon", "-74")
+                        .param("radius", "0").header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(get("/api/activities").param("lat", "4.6").param("lon", "-74").param("radius", "500")
-                        .header("Authorization", auth))
+
+        mockMvc.perform(get("/api/activities").param("lat", "4.6").param("lon", "-74")
+                        .param("radius", "500").header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(get("/api/activities").header("Authorization", auth))
+
+        mockMvc.perform(get("/api/activities").header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isBadRequest());
+
         mockMvc.perform(get("/api/activities").param("lat", "abc").param("lon", "-74")
-                        .header("Authorization", auth))
+                        .header(HttpHeaders.AUTHORIZATION, auth))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
-    @DisplayName("el radio filtra y el resultado va de la mas cercana a la mas lejana")
+    @DisplayName("el radio filtra y los resultados se ordenan por distancia")
     void radiusFiltersAndResultsAreSortedByDistance() throws Exception {
         save("Media", Category.DEPORTES, 0.5);
         save("Lejos", Category.ESTUDIO, 5.0);
@@ -234,26 +316,112 @@ class ActivityFeatureTests {
 
         nearby(alice, 1.0)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].title").value("Cerca"))
-                .andExpect(jsonPath("$[0].distanceKm").value(0.1))
-                .andExpect(jsonPath("$[1].title").value("Media"))
-                .andExpect(jsonPath("$[1].distanceKm").value(0.5));
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].title").value("Cerca"))
+                .andExpect(jsonPath("$.content[0].distanceKm").value(0.1))
+                .andExpect(jsonPath("$.content[1].title").value("Media"))
+                .andExpect(jsonPath("$.content[1].distanceKm").value(0.5));
 
         nearby(alice, 10.0)
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[2].title").value("Lejos"));
+                .andExpect(jsonPath("$.content.length()").value(3))
+                .andExpect(jsonPath("$.content[2].title").value("Lejos"));
     }
 
     @Test
     @DisplayName("las actividades que ya terminaron no aparecen")
     void endedActivitiesAreHidden() throws Exception {
-        saveBetween("Pasada", Category.CULTURA, 0.1, inDays(-1), inDays(-1).plusHours(2));
+        saveBetween("Pasada", Category.CULTURA, 0.1,
+                inDays(-1), inDays(-1).plusHours(2));
         save("Futura", Category.CULTURA, 0.1);
 
         nearby(alice, 1.0)
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].title").value("Futura"));
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("Futura"));
+    }
+
+    @Test
+    @DisplayName("la primera pagina incluye metadatos de paginacion")
+    void nearbyReturnsFirstPageWithPaginationMetadata() throws Exception {
+        save("Actividad 1", Category.CULTURA, 0.1);
+        save("Actividad 2", Category.CULTURA, 0.2);
+        save("Actividad 3", Category.CULTURA, 0.3);
+
+        nearby(alice, 1.0, 0, 2)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(2))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].title").value("Actividad 1"))
+                .andExpect(jsonPath("$.content[1].title").value("Actividad 2"));
+    }
+
+    @Test
+    @DisplayName("la ultima pagina devuelve los elementos restantes")
+    void nearbyReturnsLastPage() throws Exception {
+        save("Actividad 1", Category.CULTURA, 0.1);
+        save("Actividad 2", Category.CULTURA, 0.2);
+        save("Actividad 3", Category.CULTURA, 0.3);
+
+        nearby(alice, 1.0, 1, 2)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("Actividad 3"));
+    }
+
+    @Test
+    @DisplayName("una pagina fuera del rango devuelve contenido vacio")
+    void nearbyReturnsEmptyPageWhenPageIsOutOfRange() throws Exception {
+        save("Actividad 1", Category.CULTURA, 0.1);
+
+        nearby(alice, 1.0, 5, 2)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(5))
+                .andExpect(jsonPath("$.size").value(2))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.content.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("la paginacion rechaza paginas negativas y tamanos invalidos")
+    void nearbyRejectsInvalidPaginationParameters() throws Exception {
+        nearby(alice, 1.0, -1, 10)
+                .andExpect(status().isBadRequest());
+
+        nearby(alice, 1.0, 0, 0)
+                .andExpect(status().isBadRequest());
+
+        nearby(alice, 1.0, 0, 51)
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("joined se conserva correctamente en cada pagina")
+    void nearbyPreservesJoinedStatusInPage() throws Exception {
+        Activity joinedActivity = save("Inscrita", Category.CULTURA, 0.1);
+        save("No inscrita", Category.CULTURA, 0.2);
+
+        join(alice, joinedActivity.getId()).andExpect(status().isOk());
+
+        nearby(alice, 1.0, 0, 1)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].title").value("Inscrita"))
+                .andExpect(jsonPath("$.content[0].joined").value(true))
+                .andExpect(jsonPath("$.content[0].participants").value(1));
+
+        nearby(bob, 1.0, 0, 1)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].joined").value(false))
+                .andExpect(jsonPath("$.content[0].participants").value(1));
     }
 
     // ------------------------------------------------------------------ unirse y salir
@@ -271,7 +439,8 @@ class ActivityFeatureTests {
         join(alice, activity.getId()).andExpect(status().isConflict());
         join(alice, UUID.randomUUID()).andExpect(status().isNotFound());
 
-        Activity ended = saveBetween("Pasada", Category.CULTURA, 0.1, inDays(-1), inDays(-1).plusHours(2));
+        Activity ended = saveBetween("Pasada", Category.CULTURA, 0.1,
+                inDays(-1), inDays(-1).plusHours(2));
         join(alice, ended.getId()).andExpect(status().isConflict());
 
         join(alice, "no-es-un-uuid").andExpect(status().isBadRequest());
@@ -286,25 +455,122 @@ class ActivityFeatureTests {
         leave(alice, activity.getId()).andExpect(status().isNoContent());
 
         nearby(alice, 1.0)
-                .andExpect(jsonPath("$[0].participants").value(0))
-                .andExpect(jsonPath("$[0].joined").value(false));
+                .andExpect(jsonPath("$.content[0].participants").value(0))
+                .andExpect(jsonPath("$.content[0].joined").value(false));
 
         leave(alice, activity.getId()).andExpect(status().isNotFound());
     }
 
     @Test
-    @DisplayName("los inscritos se cuentan para todos y 'joined' es de cada usuario")
+    @DisplayName("los inscritos se cuentan para todos y joined es personal")
     void participantsAreSharedButJoinedIsPersonal() throws Exception {
         Activity activity = save("Ajedrez", Category.ENTRETENIMIENTO, 0.1);
         join(alice, activity.getId()).andExpect(status().isOk());
 
         nearby(bob, 1.0)
-                .andExpect(jsonPath("$[0].participants").value(1))
-                .andExpect(jsonPath("$[0].joined").value(false));
+                .andExpect(jsonPath("$.content[0].participants").value(1))
+                .andExpect(jsonPath("$.content[0].joined").value(false));
 
         nearby(alice, 1.0)
-                .andExpect(jsonPath("$[0].participants").value(1))
-                .andExpect(jsonPath("$[0].joined").value(true));
+                .andExpect(jsonPath("$.content[0].participants").value(1))
+                .andExpect(jsonPath("$.content[0].joined").value(true));
+    }
+
+    // ------------------------------------------------------------------ actividades inscritas (BE-2)
+
+    @Test
+    @DisplayName("joined devuelve las actividades inscritas por el usuario autenticado")
+    void joinedActivitiesReturnsCurrentUserEnrollments() throws Exception {
+        Activity first = save("Actividad inscrita 1", Category.CULTURA, 0.1);
+        Activity second = save("Actividad inscrita 2", Category.DEPORTES, 0.2);
+        save("Actividad no inscrita", Category.ESTUDIO, 0.3);
+
+        join(alice, first.getId()).andExpect(status().isOk());
+        join(alice, second.getId()).andExpect(status().isOk());
+
+        joinedActivities(alice, 0, 10)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(10))
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.content[0].activity").exists())
+                .andExpect(jsonPath("$.content[0].activity.joined").value(true))
+                .andExpect(jsonPath("$.content[0].enrollment.id").exists())
+                .andExpect(jsonPath("$.content[0].enrollment.joinedAt").exists())
+                .andExpect(jsonPath("$.content[0].enrollment.status").value("CONFIRMED"));
+    }
+
+    @Test
+    @DisplayName("joined no expone las inscripciones de otro usuario")
+    void joinedActivitiesAreIsolatedByUser() throws Exception {
+        Activity activity = save("Actividad de Alice", Category.CULTURA, 0.1);
+        join(alice, activity.getId()).andExpect(status().isOk());
+
+        joinedActivities(alice, 0, 10)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].activity.title").value("Actividad de Alice"));
+
+        joinedActivities(bob, 0, 10)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.content.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("joined devuelve una pagina vacia cuando el usuario no tiene inscripciones")
+    void joinedActivitiesReturnsEmptyContent() throws Exception {
+        joinedActivities(alice, 0, 10)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(10))
+                .andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.totalPages").value(0))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.content.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("joined soporta paginacion")
+    void joinedActivitiesSupportsPagination() throws Exception {
+        Activity first = save("Inscrita 1", Category.CULTURA, 0.1);
+        Activity second = save("Inscrita 2", Category.DEPORTES, 0.2);
+        Activity third = save("Inscrita 3", Category.ESTUDIO, 0.3);
+
+        join(alice, first.getId()).andExpect(status().isOk());
+        join(alice, second.getId()).andExpect(status().isOk());
+        join(alice, third.getId()).andExpect(status().isOk());
+
+        joinedActivities(alice, 0, 2)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(2))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.content.length()").value(2));
+
+        joinedActivities(alice, 1, 2)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.content.length()").value(1));
+    }
+
+    @Test
+    @DisplayName("joined rechaza parametros de paginacion invalidos")
+    void joinedActivitiesRejectsInvalidPagination() throws Exception {
+        joinedActivities(alice, -1, 10)
+                .andExpect(status().isBadRequest());
+
+        joinedActivities(alice, 0, 0)
+                .andExpect(status().isBadRequest());
+
+        joinedActivities(alice, 0, 51)
+                .andExpect(status().isBadRequest());
     }
 
     // ------------------------------------------------------------------ preferencias
@@ -317,7 +583,7 @@ class ActivityFeatureTests {
         join(alice, activity.getId()).andExpect(status().isOk());
         assertThat(preferenceRepository.findByUserIdAndCategory(alice.id(), Category.DEPORTES)
                 .orElseThrow().getScore())
-                .isCloseTo(1.0, within(0.0001)); // d=0 -> 1/(1+0)
+                .isCloseTo(1.0, within(0.0001));
 
         leave(alice, activity.getId()).andExpect(status().isNoContent());
         assertThat(preferenceRepository.findByUserIdAndCategory(alice.id(), Category.DEPORTES)
@@ -336,15 +602,15 @@ class ActivityFeatureTests {
 
         join(alice, yoga.getId()).andExpect(status().isOk());
 
-        // Alice prefiere DEPORTES: Futbol (0.68) le gana a Cine (0.36) aunque este mas lejos.
+        // Las recomendaciones siguen devolviendo una lista, no un objeto paginado.
         recommendations(alice, 1.0)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].activity.title").value("Futbol lejos"))
                 .andExpect(jsonPath("$[1].activity.title").value("Cine cerca"));
 
-        // Bob no tiene preferencias: manda la distancia y ve las tres.
         recommendations(bob, 1.0)
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].activity.title").value("Cine cerca"))
                 .andExpect(jsonPath("$[1].activity.title").value("Yoga inscrita"))
@@ -358,6 +624,7 @@ class ActivityFeatureTests {
     void createAndGetActivityWithPrototypeFields() throws Exception {
         ZonedDateTime start = inDays(2);
         ZonedDateTime end = inDays(2).plusHours(2);
+
         String body = """
                 {
                     "title": "Partido Prototipo",
@@ -385,12 +652,13 @@ class ActivityFeatureTests {
                 .andExpect(jsonPath("$.imageUrl").value("https://example.com/foto.jpg"))
                 .andReturn();
 
-        String activityId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asString();
+        String activityId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("id").asString();
 
         mockMvc.perform(get("/api/activities/" + activityId)
                         .param("lat", String.valueOf(baseLat))
                         .param("lon", "-74.0")
-                        .header("Authorization", "Bearer " + alice.token()))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + alice.token()))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Cache-Control", "public, max-age=300"))
                 .andExpect(jsonPath("$.id").value(activityId))
@@ -404,6 +672,7 @@ class ActivityFeatureTests {
     void cannotJoinIfCapacityReached() throws Exception {
         ZonedDateTime start = inDays(2);
         ZonedDateTime end = inDays(2).plusHours(2);
+
         String body = """
                 {
                     "title": "Cupo Lleno Test",
@@ -417,8 +686,12 @@ class ActivityFeatureTests {
                 }
                 """.formatted(iso(start), iso(end), baseLat);
 
-        MvcResult result = create(alice, body).andExpect(status().isCreated()).andReturn();
-        String activityId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asString();
+        MvcResult result = create(alice, body)
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String activityId = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("id").asString();
 
         join(alice, UUID.fromString(activityId)).andExpect(status().isOk());
 
