@@ -19,12 +19,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.group41.backend.activity.service.ActivityService;
 import com.group41.backend.analytics.AnalyticsPublisher;
+import com.group41.backend.common.ApiException;
 import com.group41.backend.schedule.service.ScheduleService;
 import com.group41.backend.storage.ActivityStorageService;
 import com.group41.backend.user.domain.User;
+
 
 import jakarta.validation.Valid;
 
@@ -50,22 +53,46 @@ public class ActivityController {
         this.activityStorageService = activityStorageService;
     }
 
-    /** Crea una actividad. */
     @PostMapping
     public ResponseEntity<ActivityDtos.ActivityResponse> create(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody ActivityDtos.CreateActivityRequest request,
-            @RequestParam (value = "source", required = false) String source) {
-        ActivityDtos.ActivityResponse response = activityService.create(user, request);
+            @RequestParam(value = "source", required = false) String source
+    ) {
+        ActivityDtos.ActivityResponse response;
+
+        try {
+            response = activityService.create(user, request);
+        } catch (DataIntegrityViolationException ex) {
+            // Puede ocurrir si dos peticiones usan simultáneamente
+            // el mismo attemptId.
+            response = activityService.findExistingCreation(user, request);
+        } catch (ApiException ex) {
+            // Solo los rechazos definitivos de negocio se registran como failure.
+            if (request.attemptId() != null
+                    && ex.getStatus().is4xxClientError()
+                    && ex.getStatus() != HttpStatus.CONFLICT) {
+
+                analytics.planCreationResult(
+                        user.getId(),
+                        request.attemptId(),
+                        "failure",
+                        null
+                );
+            }
+
+            throw ex;
+        }
+
         if ("friend_availability".equals(source)) {
             analytics.friendAvailabilityUsed(
                     user.getId(),
-            "plan_created"
+                    "plan_created"
             );
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
-        .body(response);   
+                .body(response);
     }
 
     /** Obtiene el detalle de una actividad por ID. */

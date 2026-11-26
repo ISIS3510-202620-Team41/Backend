@@ -68,6 +68,9 @@ public class Activity {
     @Column(name = "about_location", length = 2000)
     private String aboutLocation;
 
+    @Column(name = "creation_attempt_id", unique = true)
+    private UUID creationAttemptId;
+
     protected Activity() {
         // Requerido por JPA.
     }
@@ -101,6 +104,35 @@ public class Activity {
         this.price = price;
         this.capacity = capacity;
         this.aboutLocation = aboutLocation;
+    }
+
+    public Activity(String title, String description, Category category,
+                    ZonedDateTime startTime, ZonedDateTime endTime,
+                    String locationName, double latitude, double longitude, UUID createdBy,
+                    String imageUrl, String price, Integer capacity, String aboutLocation,
+                    UUID creationAttemptId) {
+        Objects.requireNonNull(startTime, "startTime");
+        Objects.requireNonNull(endTime, "endTime");
+
+        if (!endTime.isAfter(startTime)) {
+            throw new IllegalArgumentException(
+                    "El fin de la actividad debe ser posterior al inicio");
+        }
+
+        this.title = title;
+        this.description = description;
+        this.category = category;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.locationName = locationName;
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.createdBy = createdBy;
+        this.imageUrl = imageUrl;
+        this.price = price;
+        this.capacity = capacity;
+        this.aboutLocation = aboutLocation;
+        this.creationAttemptId = creationAttemptId;
     }
 
     public UUID getId() {
@@ -173,5 +205,9 @@ public class Activity {
 
     public void setAboutLocation(String aboutLocation) {
         this.aboutLocation = aboutLocation;
+    }
+
+    public UUID getCreationAttemptId() {
+    return creationAttemptId;
     }
 }

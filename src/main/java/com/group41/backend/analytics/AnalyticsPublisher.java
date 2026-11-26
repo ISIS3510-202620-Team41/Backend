@@ -151,6 +151,29 @@ public class AnalyticsPublisher {
                 "scheduledStartTime", scheduledStart.toString(),
                 "timestamp", occurredAt.toString()));
     }
+    
+    public void planCreationResult(
+            UUID userId,
+            UUID attemptId,
+            String status,
+            UUID planId
+    ) {
+        UUID eventId = UUID.nameUUIDFromBytes(
+                ("plan_creation_result:" + attemptId)
+                        .getBytes(StandardCharsets.UTF_8)
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("eventType", "plan_creation_result");
+        body.put("eventId", eventId.toString());
+        body.put("attemptId", attemptId.toString());
+        body.put("userId", userId.toString());
+        body.put("timestamp", Instant.now().toString());
+        body.put("status", status);
+        body.put("planId", planId == null ? null : planId.toString());
+
+        send(body);
+    }
 
     private Map<String, Object> event(String type, UUID userId, Map<String, Object> extra) {
         Map<String, Object> body = new LinkedHashMap<>();
