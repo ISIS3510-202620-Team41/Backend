@@ -56,32 +56,52 @@ public class ActivityService {
         this.analytics = analytics;
     }
 
-    @Transactional
-    public ActivityDtos.ActivityResponse create(User me, ActivityDtos.CreateActivityRequest request) {
+        @Transactional
+        public ActivityDtos.ActivityResponse create(
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
         if (!request.endTime().isAfter(request.startTime())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "El fin debe ser posterior al inicio");
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "El fin debe ser posterior al inicio");
         }
+
         if (!request.endTime().isAfter(ZonedDateTime.now())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "La actividad debe terminar en el futuro");
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "La actividad debe terminar en el futuro");
         }
 
-        String description = request.description() == null || request.description().isBlank()
-                ? null
-                : request.description().trim();
+        // Si ya existe el intento, devolvemos la actividad previamente creada.
+        if (request.attemptId() != null) {
+                Activity existing = activityRepository
+                        .findByCreationAttemptId(request.attemptId())
+                        .orElse(null);
 
-        String imageUrl = request.imageUrl() == null || request.imageUrl().isBlank()
-                ? null
-                : request.imageUrl().trim();
+                if (existing != null) {
+                validateSameCreation(existing, me, request);
+
+                afterCommit(() -> analytics.planCreationResult(
+                        me.getId(),
+                        request.attemptId(),
+                        "success",
+                        existing.getId()
+                ));
+
+                return toResponse(existing, null, 0, false);
+                }
+        }
+
+        String description = normalizeNullable(request.description());
+        String imageUrl = normalizeNullable(request.imageUrl());
+        String aboutLocation = normalizeNullable(request.aboutLocation());
 
         String price = request.price() == null || request.price().isBlank()
                 ? "Gratis"
                 : request.price().trim();
 
-        String aboutLocation = request.aboutLocation() == null || request.aboutLocation().isBlank()
-                ? null
-                : request.aboutLocation().trim();
-
-        Activity saved = activityRepository.save(new Activity(
+        Activity activity = new Activity(
                 request.title().trim(),
                 description,
                 request.category(),
@@ -94,10 +114,25 @@ public class ActivityService {
                 imageUrl,
                 price,
                 request.capacity(),
-                aboutLocation));
+                aboutLocation,
+                request.attemptId()
+        );
+
+        // saveAndFlush fuerza la comprobación de la restricción unique
+        // dentro de esta operación, en lugar de esperar al final de la transacción.
+        Activity saved = activityRepository.saveAndFlush(activity);
+
+        if (request.attemptId() != null) {
+                afterCommit(() -> analytics.planCreationResult(
+                        me.getId(),
+                        request.attemptId(),
+                        "success",
+                        saved.getId()
+                ));
+        }
 
         return toResponse(saved, null, 0, false);
-    }
+        }
 
     /**
      * Actividades vigentes dentro del radio, de la más cercana a la más lejana.
@@ -346,6 +381,34 @@ public class ActivityService {
             }
         });
     }
+        @Transactional
+        public ActivityDtos.ActivityResponse findExistingCreation(
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
+        if (request.attemptId() == null) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "No se puede resolver la creación sin attemptId");
+        }
+
+        Activity existing = activityRepository
+                .findByCreationAttemptId(request.attemptId())
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.CONFLICT,
+                        "No se encontró una creación previa para este attemptId"));
+
+        validateSameCreation(existing, me, request);
+
+        afterCommit(() -> analytics.planCreationResult(
+                me.getId(),
+                request.attemptId(),
+                "success",
+                existing.getId()
+        ));
+
+        return toResponse(existing, null, 0, false);
+        }
 
     // ------------------------------------------------------------------ helpers
 
@@ -472,4 +535,48 @@ public class ActivityService {
             );
         }
     }
+
+        private String normalizeNullable(String value) {
+        return value == null || value.isBlank()
+                ? null
+                : value.trim();
+        }
+
+        private void validateSameCreation(
+                Activity existing,
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
+        boolean sameUser = me.getId().equals(existing.getCreatedBy());
+
+        String expectedDescription = normalizeNullable(request.description());
+        String expectedImageUrl = normalizeNullable(request.imageUrl());
+        String expectedAboutLocation = normalizeNullable(request.aboutLocation());
+
+        String expectedPrice = request.price() == null || request.price().isBlank()
+                ? "Gratis"
+                : request.price().trim();
+
+        boolean samePayload =
+                existing.getTitle().equals(request.title().trim())
+                && java.util.Objects.equals(
+                        existing.getDescription(), expectedDescription)
+                && existing.getCategory() == request.category()
+                && existing.getStartTime().equals(request.startTime())
+                && existing.getEndTime().equals(request.endTime())
+                && existing.getLocationName().equals(request.locationName().trim())
+                && Double.compare(existing.getLatitude(), request.latitude()) == 0
+                && Double.compare(existing.getLongitude(), request.longitude()) == 0
+                && java.util.Objects.equals(existing.getImageUrl(), expectedImageUrl)
+                && java.util.Objects.equals(existing.getPrice(), expectedPrice)
+                && java.util.Objects.equals(existing.getCapacity(), request.capacity())
+                && java.util.Objects.equals(
+                        existing.getAboutLocation(), expectedAboutLocation);
+
+        if (!sameUser || !samePayload) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "El attemptId ya está asociado a otra creación");
+                }
+        }
 }

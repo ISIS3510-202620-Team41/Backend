@@ -12,6 +12,7 @@ import jakarta.validation.constraints.Size;
 
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /** Contratos de /api/activities. */
 public final class ActivityDtos {
@@ -31,7 +32,8 @@ public final class ActivityDtos {
             @Size(max = 500) String imageUrl,
             @Size(max = 50) String price,
             @Min(1) @Max(10000) Integer capacity,
-            @Size(max = 2000) String aboutLocation
+            @Size(max = 2000) String aboutLocation,
+            UUID attemptId
     ) {
     }
 
