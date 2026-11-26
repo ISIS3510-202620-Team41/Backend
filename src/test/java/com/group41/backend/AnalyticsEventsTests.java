@@ -43,7 +43,6 @@ import com.group41.backend.schedule.repository.TimeBlockRepository;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import static org.mockito.ArgumentMatchers.eq;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -370,4 +369,239 @@ class AnalyticsEventsTests {
 
         verifyNoInteractions(analytics);
     }
+
+        @Test
+        @DisplayName("crear actividad: publica resultado Type 5 exitoso")
+        void createActivityPublishesPlanCreationSuccess() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+
+        ZonedDateTime start = ZonedDateTime.now(BOGOTA)
+                .plusDays(2).withNano(0);
+        ZonedDateTime end = start.plusHours(2);
+
+        MvcResult result = mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createActivityBody(
+                                "Plan Type 5",
+                                attemptId,
+                                start,
+                                end
+                        )))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(
+                result.getResponse().getContentAsString());
+
+        UUID planId = UUID.fromString(body.get("id").asString());
+
+        verify(analytics).planCreationResult(
+                alice.id(),
+                attemptId,
+                "success",
+                planId
+        );
+
+        assertThat(activityRepository.findByCreationAttemptId(attemptId))
+                .isPresent();
+        }
+
+        @Test
+        @DisplayName("crear actividad: un reintento no duplica la actividad")
+        void createActivityRetryDoesNotDuplicateActivity() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+
+        ZonedDateTime start = ZonedDateTime.now(BOGOTA)
+                .plusDays(2).withNano(0);
+        ZonedDateTime end = start.plusHours(2);
+
+        String requestBody = createActivityBody(
+                "Plan idempotente",
+                attemptId,
+                start,
+                end
+        );
+
+        MvcResult first = mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        MvcResult second = mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        JsonNode firstBody = objectMapper.readTree(
+                first.getResponse().getContentAsString());
+        JsonNode secondBody = objectMapper.readTree(
+                second.getResponse().getContentAsString());
+
+        assertThat(firstBody.get("id").asString())
+                .isEqualTo(secondBody.get("id").asString());
+
+        assertThat(activityRepository.findByCreationAttemptId(attemptId))
+                .isPresent();
+
+        verify(analytics, times(2)).planCreationResult(
+                eq(alice.id()),
+                eq(attemptId),
+                eq("success"),
+                eq(UUID.fromString(firstBody.get("id").asString()))
+        );
+        }
+
+        @Test
+        @DisplayName("crear actividad: reutilizar attemptId con otro contenido devuelve 409")
+        void createActivityRejectsAttemptIdWithDifferentPayload() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+
+        ZonedDateTime start = ZonedDateTime.now(BOGOTA)
+                .plusDays(2)
+                .withNano(0);
+        ZonedDateTime end = start.plusHours(2);
+
+        // Primera petición: crea la actividad.
+        mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createActivityBody(
+                                "Plan original",
+                                attemptId,
+                                start,
+                                end
+                        )))
+                .andExpect(status().isCreated());
+
+        // Segunda petición: reutiliza el attemptId, pero cambia el título.
+        mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createActivityBody(
+                                "Plan diferente",
+                                attemptId,
+                                start,
+                                end
+                        )))
+                .andExpect(status().isConflict());
+
+        // Sigue existiendo una sola actividad asociada al intento.
+        assertThat(activityRepository.findByCreationAttemptId(attemptId))
+                .isPresent();
+
+        // No se publica un resultado de fallo por este conflicto.
+        verify(analytics, never()).planCreationResult(
+                eq(alice.id()),
+                eq(attemptId),
+                eq("failure"),
+                org.mockito.ArgumentMatchers.isNull()
+        );
+        }
+
+        @Test
+        @DisplayName("crear actividad: un rechazo definitivo publica resultado failure")
+        void createActivityPublishesFailureForDefinitiveRejection() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+
+        ZonedDateTime start = ZonedDateTime.now(BOGOTA)
+                .plusDays(2)
+                .withNano(0);
+
+        // El final es anterior al inicio: incumple una regla de negocio.
+        ZonedDateTime end = start.minusHours(1);
+
+        mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createActivityBody(
+                                "Plan inválido",
+                                attemptId,
+                                start,
+                                end
+                        )))
+                .andExpect(status().isBadRequest());
+
+        // El Backend debe informar el rechazo definitivo.
+        verify(analytics).planCreationResult(
+                alice.id(),
+                attemptId,
+                "failure",
+                null
+        );
+
+        // No debe haberse persistido una actividad.
+        assertThat(activityRepository.findByCreationAttemptId(attemptId))
+                .isEmpty();
+        }
+
+        @Test
+        @DisplayName("crear actividad: funciona sin attemptId y no publica evento Type 5")
+        void createActivityWithoutAttemptIdDoesNotPublishType5Event() throws Exception {
+        ZonedDateTime start = ZonedDateTime.now(BOGOTA)
+                .plusDays(2)
+                .withNano(0);
+        ZonedDateTime end = start.plusHours(2);
+
+        // El JSON no contiene attemptId.
+        String requestBody = """
+                {
+                        "title": "Actividad de cliente antiguo",
+                        "description": "Prueba de compatibilidad",
+                        "category": "DEPORTES",
+                        "startTime": "%s",
+                        "endTime": "%s",
+                        "locationName": "Universidad de los Andes",
+                        "latitude": 4.60123,
+                        "longitude": -74.06531
+                }
+                """.formatted(
+                start.toOffsetDateTime(),
+                end.toOffsetDateTime()
+        );
+
+        mockMvc.perform(post("/api/activities")
+                        .header("Authorization", "Bearer " + alice.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isCreated());
+
+        // No se debe emitir ningún resultado Type 5.
+        verify(analytics, never()).planCreationResult(
+                any(),
+                any(),
+                any(),
+                any()
+        );
+        }
+
+        private String createActivityBody(
+                String title,
+                UUID attemptId,
+                ZonedDateTime start,
+                ZonedDateTime end
+        ) {
+        return """
+                {
+                        "title": "%s",
+                        "description": "Actividad de prueba",
+                        "category": "DEPORTES",
+                        "startTime": "%s",
+                        "endTime": "%s",
+                        "locationName": "Universidad de los Andes",
+                        "latitude": 4.60123,
+                        "longitude": -74.06531,
+                        "attemptId": "%s"
+                }
+                """.formatted(
+                title,
+                start.toOffsetDateTime(),
+                end.toOffsetDateTime(),
+                attemptId
+        );
+        }
 }
