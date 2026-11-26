@@ -8,6 +8,7 @@ import com.group41.backend.activity.repository.JoinedActivityRow;
 import com.group41.backend.activity.repository.UserActivityRepository;
 import com.group41.backend.activity.service.RecommendationEngine.Candidate;
 import com.group41.backend.activity.service.RecommendationEngine.Ranked;
+import com.group41.backend.analytics.AnalyticsPublisher;
 import com.group41.backend.common.ApiException;
 import com.group41.backend.user.domain.User;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -15,7 +16,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.data.domain.Page;
+import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -40,13 +44,16 @@ public class ActivityService {
     private final ActivityRepository activityRepository;
     private final UserActivityRepository userActivityRepository;
     private final RecommendationEngine recommendationEngine;
+    private final AnalyticsPublisher analytics;
 
     public ActivityService(ActivityRepository activityRepository,
                            UserActivityRepository userActivityRepository,
-                           RecommendationEngine recommendationEngine) {
+                           RecommendationEngine recommendationEngine,
+                           AnalyticsPublisher analytics) {
         this.activityRepository = activityRepository;
         this.userActivityRepository = userActivityRepository;
         this.recommendationEngine = recommendationEngine;
+        this.analytics = analytics;
     }
 
     @Transactional
@@ -293,14 +300,18 @@ public class ActivityService {
             throw new ApiException(HttpStatus.CONFLICT, "La actividad ya alcanzo su cupo maximo");
         }
 
+        UserActivity enrollment;
         try {
-            userActivityRepository.saveAndFlush(new UserActivity(me.getId(), activityId));
+            enrollment = userActivityRepository.saveAndFlush(new UserActivity(me.getId(), activityId));
         } catch (DataIntegrityViolationException ex) {
             // Dos peticiones simultaneas chocando con la restriccion unica.
             throw new ApiException(HttpStatus.CONFLICT, "Ya estas inscrito en esta actividad");
         }
 
         recommendationEngine.recalculate(me.getId());
+
+        afterCommit(() -> analytics.activityEnrollmentConfirmed(enrollment.getId(), me.getId(), activityId,
+                activity.getStartTime().toInstant(), enrollment.getJoinedAt()));
 
         return toResponse(activity, null, currentParticipants + 1, true);
     }
@@ -312,8 +323,28 @@ public class ActivityService {
 
         userActivityRepository.delete(inscription);
         userActivityRepository.flush();
+        Instant canceledAt = Instant.now();
 
         recommendationEngine.recalculate(me.getId());
+
+        // Captura la hora dentro de la transaccion para publicar sin consultar despues del commit.
+        activityRepository.findById(activityId)
+                .map(activity -> activity.getStartTime().toInstant())
+                .ifPresent(scheduledStart -> afterCommit(() -> analytics.activityEnrollmentCanceled(
+                        inscription.getId(), me.getId(), activityId, scheduledStart, canceledAt)));
+    }
+
+    // Solo publica cambios persistidos, incluso si la peticion viene de una cola offline.
+    private void afterCommit(Runnable publish) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                // Spring registra los fallos de analitica sin cambiar la respuesta HTTP.
+                if (status == STATUS_COMMITTED) {
+                    publish.run();
+                }
+            }
+        });
     }
 
     // ------------------------------------------------------------------ helpers

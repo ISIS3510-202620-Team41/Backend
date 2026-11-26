@@ -27,10 +27,13 @@ public class WebConfig implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         Path path = Paths.get(uploadDir).toAbsolutePath().normalize();
 
-        registry.addResourceHandler("/uploads/**")
+        registry.addResourceHandler("/uploads/activity-*.jpg")
                 .addResourceLocations(path.toUri().toString())
                 .setCacheControl(
                         CacheControl.maxAge(1, TimeUnit.DAYS).cachePublic()
                 );
+
+        registry.addResourceHandler("/uploads/**")
+                .addResourceLocations(path.toUri().toString());
     }
 }
