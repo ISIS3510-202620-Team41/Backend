@@ -1,5 +1,6 @@
 package com.group41.backend.user.service;
 
+import com.group41.backend.schedule.controller.ScheduleDtos;
 import com.group41.backend.schedule.service.ScheduleService;
 import com.group41.backend.auth.AuthDtos;
 import com.group41.backend.auth.AuthService;
@@ -15,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.util.Set;
 import java.util.Collection;
@@ -166,6 +168,33 @@ public class FriendshipService {
         return loadUsers(freeIds).values().stream()
                 .sorted(Comparator.comparing(User::getName, String.CASE_INSENSITIVE_ORDER))
                 .map(AuthService::toUserResponse)
+                .toList();
+    }
+
+    /** Horarios e intervalos libres de los amigos aceptados para una fecha. */
+    @Transactional(readOnly = true)
+    public List<UserDtos.FriendScheduleResponse> friendsSchedules(User me, LocalDate date, String timezone) {
+        List<UUID> ids = friendIds(me.getId());
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, User> users = loadUsers(ids);
+
+        return ids.stream()
+                .map(id -> {
+                    User friend = users.get(id);
+                    if (friend == null) {
+                        return null;
+                    }
+                    ScheduleDtos.GapsResponse gaps = scheduleService.gapsFor(id, date, timezone);
+                    return new UserDtos.FriendScheduleResponse(
+                            AuthService.toUserResponse(friend),
+                            gaps.free()
+                    );
+                })
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(f -> f.friend().name(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 

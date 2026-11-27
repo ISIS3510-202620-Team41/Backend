@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -73,5 +74,16 @@ public class FriendshipController {
         // Aun no existe el concepto de "plan": por ahora solo se emite "viewed".
         analytics.friendAvailabilityUsed(user.getId(), "viewed");
         return ResponseEntity.ok(free);
+    }
+
+    /** Horarios e intervalos libres de amigos en una fecha específica. */
+    @GetMapping("/schedules")
+    public ResponseEntity<List<UserDtos.FriendScheduleResponse>> schedules(
+            @AuthenticationPrincipal User user,
+            @RequestParam("date") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(value = "tz", required = false) String tz) {
+        List<UserDtos.FriendScheduleResponse> schedules = friendshipService.friendsSchedules(user, date, tz);
+        analytics.friendAvailabilityUsed(user.getId(), "matrix_viewed");
+        return ResponseEntity.ok(schedules);
     }
 }

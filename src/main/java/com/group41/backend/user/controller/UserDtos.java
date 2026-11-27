@@ -36,4 +36,11 @@ public final class UserDtos {
             Instant createdAt
     ) {
     }
+
+    /** Horario e intervalos libres de un amigo en un dia determinado. */
+    public record FriendScheduleResponse(
+            AuthDtos.UserResponse friend,
+            java.util.List<com.group41.backend.schedule.controller.ScheduleDtos.FreeInterval> free
+    ) {
+    }
 }
