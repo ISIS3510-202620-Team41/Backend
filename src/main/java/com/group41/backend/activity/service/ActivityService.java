@@ -4,16 +4,22 @@ import com.group41.backend.activity.controller.ActivityDtos;
 import com.group41.backend.activity.domain.Activity;
 import com.group41.backend.activity.domain.UserActivity;
 import com.group41.backend.activity.repository.ActivityRepository;
+import com.group41.backend.activity.repository.JoinedActivityRow;
 import com.group41.backend.activity.repository.UserActivityRepository;
 import com.group41.backend.activity.service.RecommendationEngine.Candidate;
 import com.group41.backend.activity.service.RecommendationEngine.Ranked;
+import com.group41.backend.analytics.AnalyticsPublisher;
 import com.group41.backend.common.ApiException;
 import com.group41.backend.user.domain.User;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.data.domain.Page;
+import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -33,45 +39,69 @@ public class ActivityService {
     private static final double DEFAULT_RECOMMENDATION_RADIUS_KM = 5.0;
     private static final double MAX_RADIUS_KM = 50.0;
     private static final int MAX_RECOMMENDATIONS = 20;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final ActivityRepository activityRepository;
     private final UserActivityRepository userActivityRepository;
     private final RecommendationEngine recommendationEngine;
+    private final AnalyticsPublisher analytics;
 
     public ActivityService(ActivityRepository activityRepository,
                            UserActivityRepository userActivityRepository,
-                           RecommendationEngine recommendationEngine) {
+                           RecommendationEngine recommendationEngine,
+                           AnalyticsPublisher analytics) {
         this.activityRepository = activityRepository;
         this.userActivityRepository = userActivityRepository;
         this.recommendationEngine = recommendationEngine;
+        this.analytics = analytics;
     }
 
-    @Transactional
-    public ActivityDtos.ActivityResponse create(User me, ActivityDtos.CreateActivityRequest request) {
+        @Transactional
+        public ActivityDtos.ActivityResponse create(
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
         if (!request.endTime().isAfter(request.startTime())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "El fin debe ser posterior al inicio");
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "El fin debe ser posterior al inicio");
         }
+
         if (!request.endTime().isAfter(ZonedDateTime.now())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "La actividad debe terminar en el futuro");
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "La actividad debe terminar en el futuro");
         }
 
-        String description = request.description() == null || request.description().isBlank()
-                ? null
-                : request.description().trim();
+        // Si ya existe el intento, devolvemos la actividad previamente creada.
+        if (request.attemptId() != null) {
+                Activity existing = activityRepository
+                        .findByCreationAttemptId(request.attemptId())
+                        .orElse(null);
 
-        String imageUrl = request.imageUrl() == null || request.imageUrl().isBlank()
-                ? null
-                : request.imageUrl().trim();
+                if (existing != null) {
+                validateSameCreation(existing, me, request);
+
+                afterCommit(() -> analytics.planCreationResult(
+                        me.getId(),
+                        request.attemptId(),
+                        "success",
+                        existing.getId()
+                ));
+
+                return toResponse(existing, null, 0, false);
+                }
+        }
+
+        String description = normalizeNullable(request.description());
+        String imageUrl = normalizeNullable(request.imageUrl());
+        String aboutLocation = normalizeNullable(request.aboutLocation());
 
         String price = request.price() == null || request.price().isBlank()
                 ? "Gratis"
                 : request.price().trim();
 
-        String aboutLocation = request.aboutLocation() == null || request.aboutLocation().isBlank()
-                ? null
-                : request.aboutLocation().trim();
-
-        Activity saved = activityRepository.save(new Activity(
+        Activity activity = new Activity(
                 request.title().trim(),
                 description,
                 request.category(),
@@ -84,19 +114,164 @@ public class ActivityService {
                 imageUrl,
                 price,
                 request.capacity(),
-                aboutLocation));
+                aboutLocation,
+                request.attemptId()
+        );
+
+        // saveAndFlush fuerza la comprobación de la restricción unique
+        // dentro de esta operación, en lugar de esperar al final de la transacción.
+        Activity saved = activityRepository.saveAndFlush(activity);
+
+        if (request.attemptId() != null) {
+                afterCommit(() -> analytics.planCreationResult(
+                        me.getId(),
+                        request.attemptId(),
+                        "success",
+                        saved.getId()
+                ));
+        }
 
         return toResponse(saved, null, 0, false);
-    }
+        }
 
-    /** Actividades vigentes dentro del radio, de la mas cercana a la mas lejana. */
+    /**
+     * Actividades vigentes dentro del radio, de la más cercana a la más lejana.
+     * Los candidatos se filtran y ordenan antes de aplicar la paginación.
+     */
     @Transactional(readOnly = true)
-    public List<ActivityDtos.ActivityResponse> nearby(User me, double lat, double lon, Double radiusKm) {
+    public ActivityDtos.PageResponse<ActivityDtos.ActivityResponse> nearby(
+            User me,
+            double lat,
+            double lon,
+            Double radiusKm,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
         validateCoordinates(lat, lon);
+
         double radius = resolveRadius(radiusKm, DEFAULT_SEARCH_RADIUS_KM);
 
-        Set<UUID> joined = new HashSet<>(userActivityRepository.findActivityIdsByUserId(me.getId()));
-        return toResponses(findCandidates(lat, lon, radius), joined);
+        List<Candidate> candidates = findCandidates(lat, lon, radius);
+
+        long totalElements = candidates.size();
+        int totalPages = (int) Math.ceil((double) totalElements / size);
+
+        long offset = (long) page * size;
+
+        if (offset >= totalElements) {
+            return new ActivityDtos.PageResponse<>(
+                    List.of(),
+                    page,
+                    size,
+                    totalElements,
+                    totalPages,
+                    false
+            );
+        }
+
+        int fromIndex = (int) offset;
+        int toIndex = (int) Math.min(offset + size, totalElements);
+
+        List<Candidate> pageCandidates = candidates.subList(fromIndex, toIndex);
+
+        List<UUID> activityIds = pageCandidates.stream()
+                .map(candidate -> candidate.activity().getId())
+                .toList();
+
+        Set<UUID> joined = activityIds.isEmpty()
+                ? Set.of()
+                : new HashSet<>(userActivityRepository.findJoinedActivityIds(
+                        me.getId(),
+                        activityIds
+                ));
+
+        List<ActivityDtos.ActivityResponse> content =
+                toResponses(pageCandidates, joined);
+
+        return new ActivityDtos.PageResponse<>(
+                content,
+                page,
+                size,
+                totalElements,
+                totalPages,
+                offset + content.size() < totalElements
+        );
+    }
+
+    /**
+     * Actividades en las que está inscrito el usuario autenticado.
+     * Prioriza las actividades futuras y después muestra las pasadas.
+     */
+    @Transactional(readOnly = true)
+    public ActivityDtos.PageResponse<ActivityDtos.JoinedActivityResponse> joinedActivities(
+            User me,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
+
+        Page<JoinedActivityRow> result =
+                userActivityRepository.findJoinedActivities(
+                        me.getId(),
+                        ZonedDateTime.now(),
+                        PageRequest.of(page, size)
+                );
+
+        List<UUID> activityIds = result.getContent().stream()
+                .map(row -> row.activity().getId())
+                .toList();
+
+        Map<UUID, Long> participantCounts = new HashMap<>();
+
+        if (!activityIds.isEmpty()) {
+            userActivityRepository.countByActivityIds(activityIds)
+                    .forEach(count -> participantCounts.put(
+                            count.getActivityId(),
+                            count.getTotal()
+                    ));
+        }
+
+        List<ActivityDtos.JoinedActivityResponse> content =
+                result.getContent().stream()
+                        .map(row -> {
+                            Activity activity = row.activity();
+
+                            ActivityDtos.ActivityResponse activityResponse =
+                                    toResponse(
+                                            activity,
+                                            null,
+                                            participantCounts.getOrDefault(
+                                                    activity.getId(),
+                                                    0L
+                                            ).intValue(),
+                                            true
+                                    );
+
+                            ActivityDtos.EnrollmentResponse enrollmentResponse =
+                                    new ActivityDtos.EnrollmentResponse(
+                                            row.enrollmentId().toString(),
+                                            DateTimeFormatter.ISO_INSTANT.format(
+                                                    row.joinedAt()
+                                            ),
+                                            "CONFIRMED"
+                                    );
+
+                            return new ActivityDtos.JoinedActivityResponse(
+                                    activityResponse,
+                                    enrollmentResponse
+                            );
+                        })
+                        .toList();
+
+        return new ActivityDtos.PageResponse<>(
+                content,
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.hasNext()
+        );
     }
 
     /** Actividades cercanas en las que no estoy inscrito, ordenadas por preferencias y distancia. */
@@ -160,14 +335,18 @@ public class ActivityService {
             throw new ApiException(HttpStatus.CONFLICT, "La actividad ya alcanzo su cupo maximo");
         }
 
+        UserActivity enrollment;
         try {
-            userActivityRepository.saveAndFlush(new UserActivity(me.getId(), activityId));
+            enrollment = userActivityRepository.saveAndFlush(new UserActivity(me.getId(), activityId));
         } catch (DataIntegrityViolationException ex) {
             // Dos peticiones simultaneas chocando con la restriccion unica.
             throw new ApiException(HttpStatus.CONFLICT, "Ya estas inscrito en esta actividad");
         }
 
         recommendationEngine.recalculate(me.getId());
+
+        afterCommit(() -> analytics.activityEnrollmentConfirmed(enrollment.getId(), me.getId(), activityId,
+                activity.getStartTime().toInstant(), enrollment.getJoinedAt()));
 
         return toResponse(activity, null, currentParticipants + 1, true);
     }
@@ -179,21 +358,94 @@ public class ActivityService {
 
         userActivityRepository.delete(inscription);
         userActivityRepository.flush();
+        Instant canceledAt = Instant.now();
 
         recommendationEngine.recalculate(me.getId());
+
+        // Captura la hora dentro de la transaccion para publicar sin consultar despues del commit.
+        activityRepository.findById(activityId)
+                .map(activity -> activity.getStartTime().toInstant())
+                .ifPresent(scheduledStart -> afterCommit(() -> analytics.activityEnrollmentCanceled(
+                        inscription.getId(), me.getId(), activityId, scheduledStart, canceledAt)));
     }
+
+    // Solo publica cambios persistidos, incluso si la peticion viene de una cola offline.
+    private void afterCommit(Runnable publish) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                // Spring registra los fallos de analitica sin cambiar la respuesta HTTP.
+                if (status == STATUS_COMMITTED) {
+                    publish.run();
+                }
+            }
+        });
+    }
+        @Transactional
+        public ActivityDtos.ActivityResponse findExistingCreation(
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
+        if (request.attemptId() == null) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "No se puede resolver la creación sin attemptId");
+        }
+
+        Activity existing = activityRepository
+                .findByCreationAttemptId(request.attemptId())
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.CONFLICT,
+                        "No se encontró una creación previa para este attemptId"));
+
+        validateSameCreation(existing, me, request);
+
+        afterCommit(() -> analytics.planCreationResult(
+                me.getId(),
+                request.attemptId(),
+                "success",
+                existing.getId()
+        ));
+
+        return toResponse(existing, null, 0, false);
+        }
 
     // ------------------------------------------------------------------ helpers
 
-    /** Bounding Box en la consulta, distancia exacta en memoria. */
-    private List<Candidate> findCandidates(double lat, double lon, double radiusKm) {
+    /**
+     * Bounding Box en la consulta, distancia exacta en memoria.
+     * Ordena por distancia y utiliza el ID como desempate determinista.
+     */
+    private List<Candidate> findCandidates(
+            double lat,
+            double lon,
+            double radiusKm
+    ) {
         GeoUtils.BoundingBox box = GeoUtils.boundingBox(lat, lon, radiusKm);
 
         return activityRepository
-                .findInBox(box.minLat(), box.maxLat(), box.minLon(), box.maxLon(), ZonedDateTime.now()).stream()
-                .map(a -> new Candidate(a, GeoUtils.distanceKm(lat, lon, a.getLatitude(), a.getLongitude())))
-                .filter(c -> c.distanceKm() <= radiusKm)
-                .sorted(Comparator.comparingDouble(Candidate::distanceKm))
+                .findInBox(
+                        box.minLat(),
+                        box.maxLat(),
+                        box.minLon(),
+                        box.maxLon(),
+                        ZonedDateTime.now()
+                )
+                .stream()
+                .map(activity -> new Candidate(
+                        activity,
+                        GeoUtils.distanceKm(
+                                lat,
+                                lon,
+                                activity.getLatitude(),
+                                activity.getLongitude()
+                        )
+                ))
+                .filter(candidate -> candidate.distanceKm() <= radiusKm)
+                .sorted(
+                        Comparator.comparingDouble(Candidate::distanceKm)
+                                .thenComparing(candidate -> candidate.activity().getId())
+                )
                 .toList();
     }
 
@@ -267,4 +519,64 @@ public class ActivityService {
         double factor = Math.pow(10, decimals);
         return Math.round(value * factor) / factor;
     }
+
+    private static void validatePagination(int page, int size) {
+        if (page < 0) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "La pagina no puede ser negativa"
+            );
+        }
+
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "El tamaño debe estar entre 1 y " + MAX_PAGE_SIZE
+            );
+        }
+    }
+
+        private String normalizeNullable(String value) {
+        return value == null || value.isBlank()
+                ? null
+                : value.trim();
+        }
+
+        private void validateSameCreation(
+                Activity existing,
+                User me,
+                ActivityDtos.CreateActivityRequest request
+        ) {
+        boolean sameUser = me.getId().equals(existing.getCreatedBy());
+
+        String expectedDescription = normalizeNullable(request.description());
+        String expectedImageUrl = normalizeNullable(request.imageUrl());
+        String expectedAboutLocation = normalizeNullable(request.aboutLocation());
+
+        String expectedPrice = request.price() == null || request.price().isBlank()
+                ? "Gratis"
+                : request.price().trim();
+
+        boolean samePayload =
+                existing.getTitle().equals(request.title().trim())
+                && java.util.Objects.equals(
+                        existing.getDescription(), expectedDescription)
+                && existing.getCategory() == request.category()
+                && existing.getStartTime().equals(request.startTime())
+                && existing.getEndTime().equals(request.endTime())
+                && existing.getLocationName().equals(request.locationName().trim())
+                && Double.compare(existing.getLatitude(), request.latitude()) == 0
+                && Double.compare(existing.getLongitude(), request.longitude()) == 0
+                && java.util.Objects.equals(existing.getImageUrl(), expectedImageUrl)
+                && java.util.Objects.equals(existing.getPrice(), expectedPrice)
+                && java.util.Objects.equals(existing.getCapacity(), request.capacity())
+                && java.util.Objects.equals(
+                        existing.getAboutLocation(), expectedAboutLocation);
+
+        if (!sameUser || !samePayload) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "El attemptId ya está asociado a otra creación");
+                }
+        }
 }

@@ -4,10 +4,10 @@ import com.group41.backend.activity.domain.Activity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
 
 public interface ActivityRepository extends JpaRepository<Activity, UUID> {
 
@@ -26,4 +26,5 @@ public interface ActivityRepository extends JpaRepository<Activity, UUID> {
                              @Param("now") ZonedDateTime now);
 
     boolean existsByEndTimeAfter(ZonedDateTime now);
+    Optional<Activity> findByCreationAttemptId(UUID creationAttemptId);
 }

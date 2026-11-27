@@ -19,12 +19,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.group41.backend.activity.service.ActivityService;
 import com.group41.backend.analytics.AnalyticsPublisher;
+import com.group41.backend.common.ApiException;
 import com.group41.backend.schedule.service.ScheduleService;
 import com.group41.backend.storage.ActivityStorageService;
 import com.group41.backend.user.domain.User;
+
 
 import jakarta.validation.Valid;
 
@@ -50,22 +53,46 @@ public class ActivityController {
         this.activityStorageService = activityStorageService;
     }
 
-    /** Crea una actividad. */
     @PostMapping
     public ResponseEntity<ActivityDtos.ActivityResponse> create(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody ActivityDtos.CreateActivityRequest request,
-            @RequestParam (value = "source", required = false) String source) {
-        ActivityDtos.ActivityResponse response = activityService.create(user, request);
+            @RequestParam(value = "source", required = false) String source
+    ) {
+        ActivityDtos.ActivityResponse response;
+
+        try {
+            response = activityService.create(user, request);
+        } catch (DataIntegrityViolationException ex) {
+            // Puede ocurrir si dos peticiones usan simultáneamente
+            // el mismo attemptId.
+            response = activityService.findExistingCreation(user, request);
+        } catch (ApiException ex) {
+            // Solo los rechazos definitivos de negocio se registran como failure.
+            if (request.attemptId() != null
+                    && ex.getStatus().is4xxClientError()
+                    && ex.getStatus() != HttpStatus.CONFLICT) {
+
+                analytics.planCreationResult(
+                        user.getId(),
+                        request.attemptId(),
+                        "failure",
+                        null
+                );
+            }
+
+            throw ex;
+        }
+
         if ("friend_availability".equals(source)) {
             analytics.friendAvailabilityUsed(
                     user.getId(),
-            "plan_created"
+                    "plan_created"
             );
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
-        .body(response);   
+                .body(response);
     }
 
     /** Obtiene el detalle de una actividad por ID. */
@@ -89,16 +116,43 @@ public class ActivityController {
         return ResponseEntity.ok(activityStorageService.storeActivityImage(user, id, file));
     }
 
-    /** Actividades cercanas. radius en km (por defecto 1, maximo 50). */
+    /** Actividades cercanas paginadas. Radius en km (por defecto 1, máximo 50). */
     @GetMapping
-    public ResponseEntity<List<ActivityDtos.ActivityResponse>> nearby(
+    public ResponseEntity<ActivityDtos.PageResponse<ActivityDtos.ActivityResponse>> nearby(
             @AuthenticationPrincipal User user,
             @RequestParam("lat") double lat,
             @RequestParam("lon") double lon,
-            @RequestParam(value = "radius", required = false) Double radius) {
+            @RequestParam(value = "radius", required = false) Double radius,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size
+    ) {
         return ResponseEntity.ok()
                 .header("Cache-Control", CACHE_HEADER_VALUE)
-                .body(activityService.nearby(user, lat, lon, radius));
+                .body(activityService.nearby(
+                        user,
+                        lat,
+                        lon,
+                        radius,
+                        page,
+                        size
+                ));
+    }
+
+    /**
+     * Devuelve las actividades en las que está inscrito el usuario autenticado.
+     */
+    @GetMapping("/joined")
+    public ResponseEntity<ActivityDtos.PageResponse<ActivityDtos.JoinedActivityResponse>> joinedActivities(
+            @AuthenticationPrincipal User user,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok()
+                .body(activityService.joinedActivities(
+                        user,
+                        page,
+                        size
+                ));
     }
 
     /**

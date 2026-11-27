@@ -1,5 +1,6 @@
 package com.group41.backend.analytics;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -122,6 +123,56 @@ public class AnalyticsPublisher {
 
     public void friendAvailabilityUsed(UUID userId, String action) {
         send(event("friend_availability_used", userId, Map.of("action", action)));
+    }
+
+    public void activityEnrollmentConfirmed(UUID enrollmentId, UUID userId, UUID activityId,
+                                            Instant scheduledStart, Instant confirmedAt) {
+        activityEnrollment("activity_enrollment_confirmed", enrollmentId, enrollmentId,
+                userId, activityId, scheduledStart, confirmedAt);
+    }
+
+    public void activityEnrollmentCanceled(UUID enrollmentId, UUID userId, UUID activityId,
+                                           Instant scheduledStart, Instant canceledAt) {
+        // Un reintento usa el mismo ID. Una nueva inscripcion recibe otro ID.
+        UUID eventId = UUID.nameUUIDFromBytes(("activity_enrollment_canceled:" + enrollmentId)
+                .getBytes(StandardCharsets.UTF_8));
+        activityEnrollment("activity_enrollment_canceled", eventId, enrollmentId,
+                userId, activityId, scheduledStart, canceledAt);
+    }
+
+    private void activityEnrollment(String type, UUID eventId, UUID enrollmentId, UUID userId,
+                                    UUID activityId, Instant scheduledStart, Instant occurredAt) {
+        send(Map.of(
+                "eventType", type,
+                "eventId", eventId.toString(),
+                "enrollmentId", enrollmentId.toString(),
+                "userId", userId.toString(),
+                "activityId", activityId.toString(),
+                "scheduledStartTime", scheduledStart.toString(),
+                "timestamp", occurredAt.toString()));
+    }
+    
+    public void planCreationResult(
+            UUID userId,
+            UUID attemptId,
+            String status,
+            UUID planId
+    ) {
+        UUID eventId = UUID.nameUUIDFromBytes(
+                ("plan_creation_result:" + attemptId)
+                        .getBytes(StandardCharsets.UTF_8)
+        );
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("eventType", "plan_creation_result");
+        body.put("eventId", eventId.toString());
+        body.put("attemptId", attemptId.toString());
+        body.put("userId", userId.toString());
+        body.put("timestamp", Instant.now().toString());
+        body.put("status", status);
+        body.put("planId", planId == null ? null : planId.toString());
+
+        send(body);
     }
 
     private Map<String, Object> event(String type, UUID userId, Map<String, Object> extra) {
